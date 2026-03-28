@@ -23,6 +23,7 @@
 SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim16;
+DMA_HandleTypeDef hdma_tim16_ch1_up;
 
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
@@ -30,6 +31,7 @@ TIM_HandleTypeDef htim16;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
@@ -37,6 +39,23 @@ static void MX_TIM16_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// Example for 4-bit LED pattern: 1,0,1,0
+  // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
+  // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
+  #define NUM_STEPS 256
+
+uint32_t led_pattern[NUM_STEPS];
+
+void generate_led_pattern(void){
+    uint32_t start = 32000;
+    uint32_t end   = 4000;
+
+    for(int i = 0; i < NUM_STEPS; i++){
+        // Linear interpolation
+        led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -65,19 +84,28 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI1_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+  //HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while(1){
-   HAL_Delay(500);
+  // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, len);
+    generate_led_pattern();
+    uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
+
+    while(1){
+   HAL_Delay(100);
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-    HAL_Delay(500);
+    HAL_Delay(100);
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+
+    HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, len);
+    HAL_Delay(100);
+    HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
   }
     /* USER CODE END WHILE */
 
@@ -191,7 +219,7 @@ static void MX_TIM16_Init(void)
   htim16.Instance = TIM16;
   htim16.Init.Prescaler = 0;
   htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 65535;
+  htim16.Init.Period = 64000;
   htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim16.Init.RepetitionCounter = 0;
   htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -204,7 +232,7 @@ static void MX_TIM16_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 32000;
+  sConfigOC.Pulse = 16000;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -228,6 +256,22 @@ static void MX_TIM16_Init(void)
   /* USER CODE BEGIN TIM16_Init 2 */
   /* USER CODE END TIM16_Init 2 */
   HAL_TIM_MspPostInit(&htim16);
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
 
 }
 
