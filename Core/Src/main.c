@@ -42,17 +42,18 @@ static void MX_TIM16_Init(void);
 // Example for 4-bit LED pattern: 1,0,1,0
   // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
   // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-  #define NUM_STEPS 256
+  #define NUM_STEPS 1024
 
 uint32_t led_pattern[NUM_STEPS];
 
 void generate_led_pattern(void){
-    uint32_t start = 32000;
-    uint32_t end   = 4000;
+    // uint32_t start = 32000;
+    // uint32_t end   = 4000;
 
     for(int i = 0; i < NUM_STEPS; i++){
         // Linear interpolation
-        led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
+        // led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
+        led_pattern[i] = i;
     }
 }
 
@@ -88,25 +89,26 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+  // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, len);
+  // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, 32);
+
     generate_led_pattern();
-    uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
+    // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
 
     while(1){
     HAL_Delay(100);
-    HAL_TIM_PWM_Stop(&htim16, TIM_CHANNEL_1);
+    // HAL_TIM_PWM_Stop(&htim16, TIM_CHANNEL_1);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
     HAL_Delay(100);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
-    HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+    // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
 
-    // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, 32);
-    // HAL_Delay(1000);
+    HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
+    HAL_Delay(1);
     //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
   }
     /* USER CODE END WHILE */
@@ -114,6 +116,22 @@ int main(void)
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
+
+ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim){
+    HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
+}
+// void DMA1_Channel3_IRQHandler(void)
+// {
+//   /* USER CODE BEGIN DMA1_Channel3_IRQn 0 */
+
+//   /* USER CODE END DMA1_Channel3_IRQn 0 */
+//   HAL_DMA_IRQHandler(&hdma_tim16_ch1_up);
+//   /* USER CODE BEGIN DMA1_Channel3_IRQn 1 */
+
+//   /* USER CODE END DMA1_Channel3_IRQn 1 */
+// }
+
+
 
 /**
   * @brief System Clock Configuration
