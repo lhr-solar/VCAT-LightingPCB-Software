@@ -88,7 +88,7 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
-  //HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -98,14 +98,16 @@ int main(void)
     uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
 
     while(1){
-   HAL_Delay(100);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
     HAL_Delay(100);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+    HAL_TIM_PWM_Stop(&htim16, TIM_CHANNEL_1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+    HAL_Delay(100);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+    HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
 
-    HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, len);
-    HAL_Delay(100);
-    HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
+    // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, 32);
+    // HAL_Delay(1000);
+    //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
   }
     /* USER CODE END WHILE */
 
@@ -219,7 +221,7 @@ static void MX_TIM16_Init(void)
   htim16.Instance = TIM16;
   htim16.Init.Prescaler = 0;
   htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 64000;
+  htim16.Init.Period = 102;
   htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim16.Init.RepetitionCounter = 0;
   htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -232,7 +234,7 @@ static void MX_TIM16_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 16000;
+  sConfigOC.Pulse = 51;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
