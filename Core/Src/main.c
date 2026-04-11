@@ -37,7 +37,7 @@ void SystemClock_Config(void);
 // Example for 4-bit LED pattern: 1,0,1,0
   // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
   // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-  #define NUM_STEPS 64
+  #define NUM_STEPS 256
 
 uint32_t led_pattern[NUM_STEPS];
 
@@ -51,13 +51,34 @@ void generate_led_pattern(void){
     //     led_pattern[i] = i;
     // }
 
-    uint32_t duty_cycles [8] = {6, 12, 18, 24, 0, 0, 0, 0};
+   // uint32_t duty_cycles [8] = {40, 40, 50, 50, 0, 0, 0, 0}; // red
+   // uint32_t duty_cycles [4] = {50, 40, 40, 40}; // white
+   // uint32_t duty_cycles [4] = {40, 50, 40, 40}; // dim white
+   // uint32_t duty_cycles [4] = {40, 40, 50, 40}; // red
+   // uint32_t duty_cycles [4] = {40, 40, 40, 50}; // white for a moment then goes to red. think white is a bug
 
-    for (int j = 0; j < 8; j++){
+	//					              B    R
+	// uint32_t duty_cycles [4] = {40, 50, 50, 40} // purple
+	// uint32_t duty_cycles [4] = {40, 50, 40, 50}; // striped R and white pattern
+	// uint32_t duty_cycles [4] = {50, 50, 40, 40}; // white
+	// uint32_t duty_cycles [4] = {40, 50, 40, 0}; // dim white
+	// uint32_t duty_cycles [4] = {0, 50, 0, 0}; // dim white
+
+
+
+	uint32_t duty_cycles [16] = {30, 30, 41, 41,
+								 30, 30, 41, 41,
+								 30, 30, 41, 41,
+								 30, 30, 41, 41};
+
+
+
+
+    for (int j = 0; j < 16; j++){
       for(int i = j*8; i < (j*8+8); i ++){
         // led_pattern[i] = (j+1) * 6; // 6, 12, 18, 24, 30, 36, 42, 48
-        //led_pattern[i] = duty_cycles[j]
-        led_pattern[i]=41;
+        led_pattern[i] = duty_cycles[j];
+        // led_pattern[i]=50;
         // 5%, 11.84%, 17.84%, 23.6% 
       }
     }
