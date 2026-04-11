@@ -73,11 +73,20 @@ void generate_led_pattern(void){
   //                30, 30, 41, 41};
 
   // white 
-	uint32_t duty_cycles [20] = {30, 41, 41, 41,
-                               30, 41, 41, 30,
-                               30, 41, 30, 30,
-                               30, 30, 30, 30};
+	// uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
+  //                              30, 41, 41, 30, // red
+  //                              30, 41, 30, 30, // yellow
+  //                              30, 30, 30, 30};// white
+  // uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
+  //                              30, 41, 41, 30, // green
+  //                              30, 41, 30, 30, // yellow
+  //                              30, 30, 30, 30};// white
 
+  //                           A   R   G   B
+	uint32_t duty_cycles [20] = {30, 30, 30, 30, // off
+                               30, 30, 41, 30, // green
+                               30, 41, 30, 30, // red
+                               30, 30, 30, 41};// blue
 
 
 
