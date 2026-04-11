@@ -37,7 +37,7 @@ void SystemClock_Config(void);
 // Example for 4-bit LED pattern: 1,0,1,0
   // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
   // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-  #define NUM_STEPS 256
+  #define NUM_STEPS 320
 
 uint32_t led_pattern[NUM_STEPS];
 
@@ -65,16 +65,25 @@ void generate_led_pattern(void){
 	// uint32_t duty_cycles [4] = {0, 50, 0, 0}; // dim white
 
 
+  // all blue 
+	// uint32_t duty_cycles [20] = {30, 30, 41, 41,
+	// 							 30, 30, 41, 41,
+	// 							 30, 30, 41, 41,
+	// 							 30, 30, 41, 41,
+  //                30, 30, 41, 41};
 
-	uint32_t duty_cycles [16] = {30, 30, 41, 41,
-								 30, 30, 41, 41,
-								 30, 30, 41, 41,
-								 30, 30, 41, 41};
+  // white 
+	uint32_t duty_cycles [20] = {30, 41, 41, 41,
+                               30, 41, 41, 30,
+                               30, 41, 30, 30,
+                               30, 30, 30, 30};
 
 
 
 
-    for (int j = 0; j < 16; j++){
+
+
+    for (int j = 0; j < 20; j++){
       for(int i = j*8; i < (j*8+8); i ++){
         // led_pattern[i] = (j+1) * 6; // 6, 12, 18, 24, 30, 36, 42, 48
         led_pattern[i] = duty_cycles[j];
@@ -137,15 +146,16 @@ int main(void)
     // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
 
     while(1){
-    HAL_Delay(100);
+    //HAL_Delay(100);
     // HAL_TIM_PWM_Stop(&htim16, TIM_CHANNEL_1);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-    HAL_Delay(100);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+    //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+    //HAL_Delay(100);
+    //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
     // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+    //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
     HAL_Delay(1);
-    //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
+
   }
     /* USER CODE END WHILE */
 
