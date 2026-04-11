@@ -2,6 +2,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
+#include "tim.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -20,20 +23,12 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-SPI_HandleTypeDef hspi1;
-
-TIM_HandleTypeDef htim16;
-DMA_HandleTypeDef hdma_tim16_ch1_up;
 
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
-static void MX_SPI1_Init(void);
-static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
@@ -42,7 +37,7 @@ static void MX_TIM16_Init(void);
 // Example for 4-bit LED pattern: 1,0,1,0
   // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
   // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-  #define NUM_STEPS 1024
+  #define NUM_STEPS 64
 
 uint32_t led_pattern[NUM_STEPS];
 
@@ -50,10 +45,32 @@ void generate_led_pattern(void){
     // uint32_t start = 32000;
     // uint32_t end   = 4000;
 
-    for(int i = 0; i < NUM_STEPS; i++){
-        // Linear interpolation
-        // led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
-        led_pattern[i] = i;
+    // for(int i = 0; i < NUM_STEPS; i++){
+    //     // Linear interpolation
+    //     // led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
+    //     led_pattern[i] = i;
+    // }
+
+    uint32_t duty_cycles [8] = {6, 12, 18, 24, 0, 0, 0, 0};
+
+    for (int j = 0; j < 8; j++){
+      for(int i = j*8; i < (j*8+8); i ++){
+        // led_pattern[i] = (j+1) * 6; // 6, 12, 18, 24, 30, 36, 42, 48
+        //led_pattern[i] = duty_cycles[j]
+        led_pattern[i]=41;
+        // 5%, 11.84%, 17.84%, 23.6% 
+      }
+    }
+}
+
+//
+
+ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim){
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    if (htim->Instance == TIM16){
+      HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
     }
 }
 
@@ -86,7 +103,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_SPI1_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
@@ -106,7 +122,6 @@ int main(void)
     HAL_Delay(100);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
     // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
-
     HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
     HAL_Delay(1);
     //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
@@ -116,22 +131,6 @@ int main(void)
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
-
- void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim){
-    HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
-}
-// void DMA1_Channel3_IRQHandler(void)
-// {
-//   /* USER CODE BEGIN DMA1_Channel3_IRQn 0 */
-
-//   /* USER CODE END DMA1_Channel3_IRQn 0 */
-//   HAL_DMA_IRQHandler(&hdma_tim16_ch1_up);
-//   /* USER CODE BEGIN DMA1_Channel3_IRQn 1 */
-
-//   /* USER CODE END DMA1_Channel3_IRQn 1 */
-// }
-
-
 
 /**
   * @brief System Clock Configuration
@@ -181,147 +180,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI1_Init(void)
-{
-
-  /* USER CODE BEGIN SPI1_Init 0 */
-  /* USER CODE END SPI1_Init 0 */
-
-  /* USER CODE BEGIN SPI1_Init 1 */
-  /* USER CODE END SPI1_Init 1 */
-  /* SPI1 parameter configuration*/
-  hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_MASTER;
-  hspi1.Init.Direction = SPI_DIRECTION_1LINE;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
-  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi1.Init.CRCPolynomial = 7;
-  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN SPI1_Init 2 */
-  /* USER CODE END SPI1_Init 2 */
-
-}
-
-/**
-  * @brief TIM16 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM16_Init(void)
-{
-
-  /* USER CODE BEGIN TIM16_Init 0 */
-  /* USER CODE END TIM16_Init 0 */
-
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
-
-  /* USER CODE BEGIN TIM16_Init 1 */
-  /* USER CODE END TIM16_Init 1 */
-  htim16.Instance = TIM16;
-  htim16.Init.Prescaler = 0;
-  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 102;
-  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim16.Init.RepetitionCounter = 0;
-  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim16) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 51;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim16, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim16, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM16_Init 2 */
-  /* USER CODE END TIM16_Init 2 */
-  HAL_TIM_MspPostInit(&htim16);
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PB11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_11;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
