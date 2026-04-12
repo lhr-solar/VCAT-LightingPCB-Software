@@ -37,69 +37,102 @@ void SystemClock_Config(void);
 // Example for 4-bit LED pattern: 1,0,1,0
   // uint32_t led_pattern[] = {32000, 16000, 8000, 4000};
   // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-  #define NUM_STEPS 320
+  #define NUM_STEPS 256
+  #define LOW 30
+  #define HI 41
 
-uint32_t led_pattern[NUM_STEPS];
+uint32_t led_pattern[128];
+uint32_t ledNum =0;
 
-void generate_led_pattern(void){
-    // uint32_t start = 32000;
-    // uint32_t end   = 4000;
+// void generate_led_pattern(void){
+//     // uint32_t start = 32000;
+//     // uint32_t end   = 4000;
 
-    // for(int i = 0; i < NUM_STEPS; i++){
-    //     // Linear interpolation
-    //     // led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
-    //     led_pattern[i] = i;
-    // }
+//     // for(int i = 0; i < NUM_STEPS; i++){
+//     //     // Linear interpolation
+//     //     // led_pattern[i] = start - ((start - end) * i) / (NUM_STEPS - 1);
+//     //     led_pattern[i] = i;
+//     // }
 
-   // uint32_t duty_cycles [8] = {40, 40, 50, 50, 0, 0, 0, 0}; // red
-   // uint32_t duty_cycles [4] = {50, 40, 40, 40}; // white
-   // uint32_t duty_cycles [4] = {40, 50, 40, 40}; // dim white
-   // uint32_t duty_cycles [4] = {40, 40, 50, 40}; // red
-   // uint32_t duty_cycles [4] = {40, 40, 40, 50}; // white for a moment then goes to red. think white is a bug
+//    // uint32_t duty_cycles [8] = {40, 40, 50, 50, 0, 0, 0, 0}; // red
+//    // uint32_t duty_cycles [4] = {50, 40, 40, 40}; // white
+//    // uint32_t duty_cycles [4] = {40, 50, 40, 40}; // dim white
+//    // uint32_t duty_cycles [4] = {40, 40, 50, 40}; // red
+//    // uint32_t duty_cycles [4] = {40, 40, 40, 50}; // white for a moment then goes to red. think white is a bug
 
-	//					              B    R
-	// uint32_t duty_cycles [4] = {40, 50, 50, 40} // purple
-	// uint32_t duty_cycles [4] = {40, 50, 40, 50}; // striped R and white pattern
-	// uint32_t duty_cycles [4] = {50, 50, 40, 40}; // white
-	// uint32_t duty_cycles [4] = {40, 50, 40, 0}; // dim white
-	// uint32_t duty_cycles [4] = {0, 50, 0, 0}; // dim white
-
-
-  // all blue 
-	// uint32_t duty_cycles [20] = {30, 30, 41, 41,
-	// 							 30, 30, 41, 41,
-	// 							 30, 30, 41, 41,
-	// 							 30, 30, 41, 41,
-  //                30, 30, 41, 41};
-
-  // white 
-	// uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
-  //                              30, 41, 41, 30, // red
-  //                              30, 41, 30, 30, // yellow
-  //                              30, 30, 30, 30};// white
-  // uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
-  //                              30, 41, 41, 30, // green
-  //                              30, 41, 30, 30, // yellow
-  //                              30, 30, 30, 30};// white
-
-  //                           A   R   G   B
-	uint32_t duty_cycles [20] = {41, 30, 30, 30, // off
-                               30, 41, 30, 30, // red
-                               30, 30, 41, 30, // green
-                               30, 30, 30, 41};// blue
+// 	//					              B    R
+// 	// uint32_t duty_cycles [4] = {40, 50, 50, 40} // purple
+// 	// uint32_t duty_cycles [4] = {40, 50, 40, 50}; // striped R and white pattern
+// 	// uint32_t duty_cycles [4] = {50, 50, 40, 40}; // white
+// 	// uint32_t duty_cycles [4] = {40, 50, 40, 0}; // dim white
+// 	// uint32_t duty_cycles [4] = {0, 50, 0, 0}; // dim white
 
 
+//   // all blue 
+// 	// uint32_t duty_cycles [20] = {30, 30, 41, 41,
+// 	// 							 30, 30, 41, 41,
+// 	// 							 30, 30, 41, 41,
+// 	// 							 30, 30, 41, 41,
+//   //                30, 30, 41, 41};
 
+//   // white 
+// 	// uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
+//   //                              30, 41, 41, 30, // red
+//   //                              30, 41, 30, 30, // yellow
+//   //                              30, 30, 30, 30};// white
+//   // uint32_t duty_cycles [20] = {30, 41, 41, 41, // off
+//   //                              30, 41, 41, 30, // green
+//   //                              30, 41, 30, 30, // yellow
+//   //                              30, 30, 30, 30};// white
 
+//   //                           A   R   G   B
+// 	// uint32_t duty_cycles [16] = {30, 41, 30, 41, // purple
+//   //                              30, 41, 30, 41, // purple
+//   //                              30, 41, 30, 41, // purple
+//   //                              30, 41, 30, 41};// purple
+//                                A   R   G   B
+// 	uint32_t duty_cycles [16] = {41, 30, 30, 30, // white
+//                               30, 41, 30, 30, // red
+//                               30, 30, 41, 30, // green
+//                               30, 30, 30, 41};// blue
+//      for (int j = 0; j < 16; j++){
+//       for(int i = j*8; i < (j*8+8); i ++){
+//         // led_pattern[i] = (j+1) * 6; // 6, 12, 18, 24, 30, 36, 42, 48
+//         led_pattern[i] = duty_cycles[j];        // led_pattern[i]=50;
+//         // 5%, 11.84%, 17.84%, 23.6% 
+//       }
+//     }
+// }
 
-    for (int j = 0; j < 20; j++){
-      for(int i = j*8; i < (j*8+8); i ++){
-        // led_pattern[i] = (j+1) * 6; // 6, 12, 18, 24, 30, 36, 42, 48
-        led_pattern[i] = duty_cycles[j];
-        // led_pattern[i]=50;
-        // 5%, 11.84%, 17.84%, 23.6% 
+void singleWRGBTransition(uint32_t ledNum){
+  uint32_t circularRange = ledNum%4;
+  
+  for(int led=0; led<4; led++){
+    uint32_t A=0;
+    uint32_t R=0;
+    uint32_t G=0;
+    uint32_t B=0;
+
+    if (led==circularRange){
+      if     (led==0){ A=HI;  R=LOW; G=LOW; B=LOW;}
+      else if(led==1){ A=LOW; R=HI;  G=LOW; B=LOW;}
+      else if(led==2){ A=LOW; R=LOW; G=HI;  B=LOW;}
+      else           { A=LOW; R=LOW; G=LOW; B=HI; }
+    } 
+    else{ A=LOW; R=LOW; G=LOW; B=LOW; }
+
+    for(int j = 0; j < 4; j++){ // byte
+      for(int i = j*8 + (led*32); i < (j*8+8) + (led*32); i ++){
+        if(j == 0){ led_pattern[i] =  A; }
+        if(j == 1){ led_pattern[i] =  R; }
+        if(j == 2){ led_pattern[i] =  G; }
+        if(j == 3){ led_pattern[i] =  B; }
       }
     }
+
+    // led_patter 32bits = led0, 32 bits = led1, 32 bits = l3d3 
+
+  }
 }
 
 //
@@ -151,9 +184,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   // HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, 32);
 
-    generate_led_pattern();
+    // generate_led_pattern();
     // uint16_t len = sizeof(led_pattern)/sizeof(led_pattern[0]);
-
     while(1){
     //HAL_Delay(100);
     // HAL_TIM_PWM_Stop(&htim16, TIM_CHANNEL_1);
@@ -163,7 +195,9 @@ int main(void)
     // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
     //HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
-    HAL_Delay(1);
+    HAL_Delay(1000);
+    singleWRGBTransition(ledNum);
+    ledNum++;
 
   }
     /* USER CODE END WHILE */
