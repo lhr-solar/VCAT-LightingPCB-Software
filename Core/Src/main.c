@@ -62,6 +62,74 @@ static void MX_CAN1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+  #define NUM_STEPS 256
+  #define LOW 30
+  #define HI 41
+  uint32_t led_pattern[128];
+  uint32_t ledNum =0;
+  const uint8_t sin_table[256] = {
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,1,1,1,1,1,2,2,2,3,3,4,4,5,
+  5,6,7,8,9,10,11,12,13,15,16,17,19,20,22,24,
+  25,27,29,31,33,35,37,40,42,44,47,49,52,55,58,61,
+  64,67,70,73,77,80,84,87,91,95,99,103,107,111,115,119,
+  123,128,132,137,141,146,151,156,161,166,171,176,181,187,192,198,
+  203,209,214,220,226,232,238,244,250,255,255,255,255,255,255,255,
+  255,255,255,255,255,255,255,255,255,255,250,244,238,232,226,220,
+  214,209,203,198,192,187,181,176,171,166,161,156,151,146,141,137,
+  132,128,123,119,115,111,107,103,99,95,91,87,84,80,77,73,
+  70,67,64,61,58,55,52,49,47,44,42,40,37,35,33,31,
+  29,27,25,24,22,20,19,17,16,15,13,12,11,10,9,8,
+  7,6,5,5,4,4,3,3,2,2,2,1,1,1,1,1,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  };
+  uint32_t smooth_rainbow_int() {
+      static int t = 0; t++; 
+      uint8_t r = sin_table[(t) & 255];
+      uint8_t g = sin_table[(t + 85) & 255];   // 256/3 ≈ 85
+      uint8_t b = sin_table[(t + 170) & 255];  // 2×85
+      return (r << 16) | (g << 8) | b;
+  }
+ uint32_t get_32bit_value(){
+
+    static uint32_t counter = 0;
+    counter ++;
+
+    int x = counter % 1536;
+
+    int r, g, b;
+
+    if (x < 256)          { r = 255;        g = x;        b = 0;
+    } else if (x < 512)   { r = 511 - x;    g = 255;      b = 0;
+    } else if (x < 768)   { r = 0;          g = 255;      b = x - 512;
+    } else if (x < 1024)  { r = 0;          g = 1023 - x; b = 255;
+    } else if (x < 1280)  { r = x - 1024;   g = 0;        b = 255;
+    } else                { r = 255;        g = 0;        b = 1535 - x; }
+
+    uint32_t color = (r << 16) | (g << 8) | b;
+    return color;
+ }
+
+  void matthews_pattner(){
+    uint32_t color = smooth_rainbow_int(); // 32 bits of A, R, G, B
+    for(int led = 0; led < 4; led ++)  {  // have all 4 LEDs be the same changing
+      uint32_t bit_index = 0;
+      for(int i = 31; i >= 0; i --){
+        uint32_t bit = color & (1 << i);
+        if(bit == 0){ led_pattern[bit_index + (led * 32)] = LOW; }
+        if(bit != 0){ led_pattern[bit_index + (led * 32)] = HI;  }
+        bit_index ++;
+      }
+    }
+  }
+  void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim){
+    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
+    if (htim->Instance == TIM16){
+      HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -101,7 +169,6 @@ int main(void)
   CAN_TxHeaderTypeDef txHeader;
   uint8_t txData[8];
   uint32_t txMailbox;
-
   CAN_FilterTypeDef filterConfig;
   filterConfig.FilterBank = 0;
   filterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
@@ -113,13 +180,9 @@ int main(void)
   filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   filterConfig.FilterActivation = ENABLE;
   filterConfig.SlaveStartFilterBank = 14;
-
   HAL_CAN_ConfigFilter(&hcan1, &filterConfig);
-
   HAL_CAN_Start(&hcan1);
-
   HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-
   HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
 
@@ -143,28 +206,32 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  uint32_t count = 0;
   while (1)
   {
       txData[0] = (uint8_t)(counter & 0xFF);
       txData[1] = (uint8_t)((counter >> 8) & 0xFF);
       txData[2] = (uint8_t)((counter >> 16) & 0xFF);
       txData[3] = (uint8_t)((counter >> 24) & 0xFF);
+      counter ++;
       // Heartbeat: Toggle GPIOB Pin 11 to show the code is running
       HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
       if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
         // if mailboxes are not full
-        HAL_Delay(1);
         if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
             // Mailboxes are full or another error occurred.
-        }else{
-          HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3,0);
-          counter++;
         }
-      }else{
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3,1);
       }
+      // HAL_Delay(100);
 
-      HAL_Delay(100);
+      if(count == 10){ 
+        matthews_pattner(); 
+        count = 0;
+      }
+      count++;
+      HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
+      HAL_Delay(1);
+
   }
     /* USER CODE END WHILE */
 
