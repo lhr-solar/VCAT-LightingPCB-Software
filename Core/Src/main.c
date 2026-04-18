@@ -170,16 +170,16 @@ int main(void)
   uint8_t txData[8];
   uint32_t txMailbox;
   CAN_FilterTypeDef filterConfig;
+  filterConfig.FilterIdHigh = 0x0000;
+  filterConfig.FilterIdLow  = 0x0000;
+  filterConfig.FilterMaskIdHigh = 0x0000;
+  filterConfig.FilterMaskIdLow  = 0x0000;
+  filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   filterConfig.FilterBank = 0;
   filterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
   filterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-  filterConfig.FilterIdHigh = 0x0000;
-  filterConfig.FilterIdLow = 0x0000;
-  filterConfig.FilterMaskIdHigh = 0x0000;
-  filterConfig.FilterMaskIdLow = 0x0000;
-  filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   filterConfig.FilterActivation = ENABLE;
-  filterConfig.SlaveStartFilterBank = 14;
+  filterConfig.SlaveStartFilterBank = 0;
   HAL_CAN_ConfigFilter(&hcan1, &filterConfig);
   HAL_CAN_Start(&hcan1);
   HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
@@ -452,7 +452,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
     CAN_RxHeaderTypeDef recieve;
     uint8_t data[8];
     if(HAL_CAN_GetRxMessage(hcan,CAN_RX_FIFO0,&recieve,data) == HAL_OK){
-      if(recieve.StdId == 0x00){
+      if(recieve.StdId == 0x66){
         // timestamp = (data[0] << 8) | data[1];
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
       }
