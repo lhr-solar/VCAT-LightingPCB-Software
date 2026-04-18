@@ -215,7 +215,7 @@ int main(void)
       txData[3] = (uint8_t)((counter >> 24) & 0xFF);
       counter ++;
       // Heartbeat: Toggle GPIOB Pin 11 to show the code is running
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+      // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
       if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
         // if mailboxes are not full
         if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
@@ -446,7 +446,19 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+// interrupt service routine for CANRX
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
+  if(hcan->Instance == CAN1){
+    CAN_RxHeaderTypeDef recieve;
+    uint8_t data[8];
+    if(HAL_CAN_GetRxMessage(hcan,CAN_RX_FIFO0,&recieve,data) == HAL_OK){
+      if(recieve.StdId == 0x00){
+        // timestamp = (data[0] << 8) | data[1];
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+      }
+    }
+  }
+}
 /* USER CODE END 4 */
 
 /**
