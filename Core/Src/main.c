@@ -46,6 +46,8 @@ CAN_HandleTypeDef hcan1;
 TIM_HandleTypeDef htim16;
 DMA_HandleTypeDef hdma_tim16_ch1_up;
 
+UART_HandleTypeDef huart1;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -56,6 +58,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM16_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -67,6 +70,10 @@ static void MX_CAN1_Init(void);
   #define HI 41
   uint32_t led_pattern[128];
   uint32_t ledNum =0;
+
+  uint8_t rgb=1;
+  uint8_t burntOrange=0;
+  uint8_t fade=0;
   const uint8_t sin_table[256] = {
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
   0,0,0,1,1,1,1,1,2,2,2,3,3,4,4,5,
@@ -111,7 +118,13 @@ static void MX_CAN1_Init(void);
  }
 
   void matthews_pattner(){
-    uint32_t color = smooth_rainbow_int(); // 32 bits of A, R, G, B
+    uint32_t color;
+    if (rgb==1){
+      color = smooth_rainbow_int(); // 32 bits of A, R, G, B
+    }
+    else{
+      color = 0;
+    }
     for(int led = 0; led < 4; led ++)  {  // have all 4 LEDs be the same changing
       uint32_t bit_index = 0;
       for(int i = 31; i >= 0; i --){
@@ -165,6 +178,7 @@ int main(void)
   MX_DMA_Init();
   MX_TIM16_Init();
   MX_CAN1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   CAN_TxHeaderTypeDef txHeader;
   uint8_t txData[8];
@@ -216,12 +230,12 @@ int main(void)
       counter ++;
       // Heartbeat: Toggle GPIOB Pin 11 to show the code is running
       // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-      if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
-        // if mailboxes are not full
-        if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
-            // Mailboxes are full or another error occurred.
-        }
-      }
+      // if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
+      //   // if mailboxes are not full
+      //   if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
+      //       // Mailboxes are full or another error occurred.
+      //   }
+      // }
       // HAL_Delay(100);
 
       if(count == 10){ 
@@ -389,6 +403,41 @@ static void MX_TIM16_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -447,17 +496,52 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 // interrupt service routine for CANRX
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
-  if(hcan->Instance == CAN1){
-    CAN_RxHeaderTypeDef recieve;
-    uint8_t data[8];
-    if(HAL_CAN_GetRxMessage(hcan,CAN_RX_FIFO0,&recieve,data) == HAL_OK){
-      if(recieve.StdId == 0x66){
-        // timestamp = (data[0] << 8) | data[1];
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-      }
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
+    if (hcan->Instance == CAN1) {
+
+        CAN_RxHeaderTypeDef recieve;
+        uint8_t data[8];   // <-- FIXED: now 8-byte buffer
+
+        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &recieve, data) == HAL_OK) {
+
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+
+            // ----- Print ID, DLC, and all data bytes -----
+            char msg[100];
+            int len = snprintf(msg, sizeof(msg),
+                               "ID=0x%03lX DLC=%ld DATA: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                               recieve.StdId,
+                               recieve.DLC,
+                               data[0], data[1], data[2], data[3],
+                               data[4], data[5], data[6], data[7]);
+
+            HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+
+            // ----- Your original behavior logic -----
+            uint8_t d = data[0]; // Interpret first byte as command
+
+            if (d & 0x01) {
+                rgb = 0;
+                burntOrange = 1;
+                fade = 0;
+            }
+            else if (d & 0x02) {
+                burntOrange = 0;
+                rgb = 1;
+                fade = 0;
+            }
+            else if (d & 0x04) {
+                fade = 1;
+                rgb = 0;
+                burntOrange = 0;
+            }
+            else{
+              rgb = 0;
+              burntOrange = 0;
+              fade = 0;
+            }
+        }
     }
-  }
 }
 /* USER CODE END 4 */
 
