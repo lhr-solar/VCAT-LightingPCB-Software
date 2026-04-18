@@ -60,20 +60,27 @@ static void MX_TIM16_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+uint32_t smooth_palette();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-  #define NUM_STEPS 256
+  #define MATTHEW_NUM_QUAD_CHIPS 8
+  #define NUM_STEPS 256 * MATTHEW_NUM_QUAD_CHIPS
   #define LOW 30
   #define HI 41
-  uint32_t led_pattern[128];
+  uint32_t led_pattern[128 * MATTHEW_NUM_QUAD_CHIPS];
   uint32_t ledNum =0;
 
   uint8_t rgb=1;
   uint8_t burntOrange=0;
   uint8_t fade=0;
+
+  #define BURNT_ORANGE_R 199
+  #define BURNT_ORANGE_G 104
+  #define BURNT_ORANGE_B 35
+  #define BURNT_ORAGNE_ARGB ((BURNT_ORANGE_R << 16) | (BURNT_ORANGE_G << 8)  | (BURNT_ORANGE_B))
+  
   const uint8_t sin_table[256] = {
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
   0,0,0,1,1,1,1,1,2,2,2,3,3,4,4,5,
@@ -119,13 +126,13 @@ static void MX_USART1_UART_Init(void);
 
   void matthews_pattner(){
     uint32_t color;
-    if (rgb==1){
-      color = smooth_rainbow_int(); // 32 bits of A, R, G, B
-    }
+    if (rgb==1){ color = smooth_rainbow_int(); /* 32 bits of A, R, G, B */ }
+    else if (burntOrange) { color = BURNT_ORAGNE_ARGB; } 
+    else if (fade) { color = smooth_palette(); }
     else{
       color = 0;
     }
-    for(int led = 0; led < 4; led ++)  {  // have all 4 LEDs be the same changing
+    for(int led = 0; led < (4*MATTHEW_NUM_QUAD_CHIPS); led ++)  {  // have all 4 LEDs be the same changing
       uint32_t bit_index = 0;
       for(int i = 31; i >= 0; i --){
         uint32_t bit = color & (1 << i);
@@ -144,6 +151,66 @@ static void MX_USART1_UART_Init(void);
     }
 }
 
+
+// New matthew code 
+// ---------------------------------------------------------------
+typedef struct {
+    uint8_t r, g, b;
+} Color;
+
+const Color palette[] = {
+    {255,255,255},  // White
+    {254,239,180},
+    {254,202,88},
+    {254,134,38},
+    {229,29,124},
+    {115,28,151},
+    {32,77,142},    // Blue
+
+    {115,28,151},
+    {229,29,124},
+    {254,134,38},
+    {254,202,88},
+    {254,239,180},
+    {255,255,255}   // White
+};
+
+#define NUM_COLORS (sizeof(palette)/sizeof(palette[0]))
+
+static inline uint8_t lerp(uint8_t a, uint8_t b, uint8_t t)
+{
+    return a + (((int)(b - a) * t) >> 8);
+}
+
+uint8_t compute_alpha(uint8_t r, uint8_t g, uint8_t b)
+{
+    uint16_t y = (77 * r + 150 * g + 29 * b) >> 8;
+
+    // compress effect so colors stay saturated
+    return (y * 180) >> 8;  // 0–180 instead of 0–255
+}
+
+uint32_t smooth_palette()
+{
+    static uint16_t t = 0;
+    t += 10;
+
+    int segment = (t >> 8) % (NUM_COLORS - 1);
+    uint8_t local_t = t & 0xFF;
+
+    Color a = palette[segment];
+    Color b = palette[segment + 1];
+
+    uint8_t r = lerp(a.r, b.r, local_t);
+    uint8_t g = lerp(a.g, b.g, local_t);
+    uint8_t bcol = lerp(a.b, b.b, local_t);
+
+    uint8_t alpha = compute_alpha(r, g, bcol);
+
+    return (alpha << 24) | (r << 16) | (g << 8) | bcol;
+}
+
+// ---------------------------------------------------------------
 /* USER CODE END 0 */
 
 /**
@@ -223,28 +290,10 @@ int main(void)
   uint32_t count = 0;
   while (1)
   {
-      txData[0] = (uint8_t)(counter & 0xFF);
-      txData[1] = (uint8_t)((counter >> 8) & 0xFF);
-      txData[2] = (uint8_t)((counter >> 16) & 0xFF);
-      txData[3] = (uint8_t)((counter >> 24) & 0xFF);
-      counter ++;
-      // Heartbeat: Toggle GPIOB Pin 11 to show the code is running
-      // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-      // if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
-      //   // if mailboxes are not full
-      //   if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
-      //       // Mailboxes are full or another error occurred.
-      //   }
-      // }
-      // HAL_Delay(100);
-
-      if(count == 10){ 
-        matthews_pattner(); 
-        count = 0;
-      }
-      count++;
+      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+      matthews_pattner(); 
       HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
-      HAL_Delay(1);
+      HAL_Delay(10);
 
   }
     /* USER CODE END WHILE */
@@ -521,13 +570,13 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
             uint8_t d = data[0]; // Interpret first byte as command
 
             if (d & 0x01) {
-                rgb = 0;
-                burntOrange = 1;
+                rgb = 1;
+                burntOrange = 0;
                 fade = 0;
             }
             else if (d & 0x02) {
-                burntOrange = 0;
-                rgb = 1;
+                burntOrange = 1;
+                rgb = 0;
                 fade = 0;
             }
             else if (d & 0x04) {
