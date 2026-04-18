@@ -2,6 +2,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "can.h"
 #include "dma.h"
 #include "tim.h"
 #include "gpio.h"
@@ -240,8 +241,46 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_TIM16_Init();
+  MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
   // HAL_TIM_PWM_Start(&htim16, TIM_CHANNEL_1);
+  CAN_TxHeaderTypeDef txHeader;
+  uint8_t txData[8];
+  uint32_t txMailbox;
+  CAN_FilterTypeDef filterConfig;
+  filterConfig.FilterBank = 0;
+  filterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+  filterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+  filterConfig.FilterIdHigh = 0x0000;
+  filterConfig.FilterIdLow = 0x0000;
+  filterConfig.FilterMaskIdHigh = 0x0000;
+  filterConfig.FilterMaskIdLow = 0x0000;
+  filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+  filterConfig.FilterActivation = ENABLE;
+  filterConfig.SlaveStartFilterBank = 14;
+  HAL_CAN_ConfigFilter(&hcan1, &filterConfig);
+  // HAL_CAN_Start(&hcan1);
+  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+    /* Fill TX header */
+  txHeader.StdId = 0x123; // 11-bit standard CAN ID
+  txHeader.ExtId = 0x00;  // Not used for standard ID
+  txHeader.IDE = CAN_ID_STD; // Standard identifier
+  txHeader.RTR = CAN_RTR_DATA; // Data frame (not remote)
+  txHeader.DLC = 8; // 8 data bytes
+  txHeader.TransmitGlobalTime = DISABLE; // TTCM disabled → must be DISABLE
+  /* Fill payload (example sensor data) */
+  uint32_t counter = 0; 
+  txData[0] = 0x00;
+  txData[1] = 0x00;
+  txData[2] = 0x00;
+  txData[3] = 0x00;
+  txData[4] = 0x00;
+  txData[5] = 0x00;
+  txData[6] = 0x00;
+  txData[7] = 0x00;
+  HAL_CAN_Start(&hcan1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -267,6 +306,13 @@ int main(void)
     HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
     HAL_Delay(1);
     // singleWRGBTransition(ledNum);
+
+      uint32_t txMailbox;
+     if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1)){
+        // if mailboxes are not full
+        if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK){
+        }
+      }
 
 
   }
