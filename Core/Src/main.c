@@ -66,10 +66,10 @@ uint32_t smooth_palette();
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
   #define MATTHEW_NUM_QUAD_CHIPS 8
-  #define NUM_STEPS 256 * MATTHEW_NUM_QUAD_CHIPS
+  #define NUM_STEPS (32 * 4 * MATTHEW_NUM_QUAD_CHIPS)
   #define LOW 30
   #define HI 41
-  uint32_t led_pattern[128 * MATTHEW_NUM_QUAD_CHIPS];
+  uint32_t led_pattern[32 * 4 * MATTHEW_NUM_QUAD_CHIPS];
   uint32_t ledNum =0;
 
   uint8_t rgb=1;
@@ -292,6 +292,7 @@ int main(void)
   {
       HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
       matthews_pattner(); 
+      __HAL_TIM_SET_COUNTER(&htim16, 0);  // reset counter so first pulse is clean
       HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
       HAL_Delay(10);
 
