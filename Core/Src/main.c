@@ -116,6 +116,25 @@ void matthews_pattner(void) {
 }
 
 /**
+ * @brief White.
+ */
+void full_white(void) {
+    uint32_t color = 255 << 24;
+
+    for (int led = 0; led < (4 * MATTHEW_NUM_QUAD_CHIPS); led++) {
+        uint32_t led_color = (led < 1) ? 0 : color;	// skip first segment bcs they bug out for some reason.
+
+        uint32_t bit_index = 0;
+        for (int i = 31; i >= 0; i--) {
+            uint32_t bit = led_color & (1 << i);
+            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
+            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
+            bit_index++;
+        }
+    }
+}
+
+/**
  * @brief  Turn indicator animation :P
  */
 void turn_ind(void) {
@@ -363,11 +382,12 @@ int main(void) {
 	uint8_t txData[8] = {0};
 	uint32_t txMailbox;
 
-
+	// rn everything is raw, needs to be done thru can?
 	while (1) {
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
 		//matthews_pattner();
 		turn_ind();
+		//full_white();
 		__HAL_TIM_SET_COUNTER(&htim16, 0); // reset counter so first pulse is clean
 		HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
 		HAL_Delay(10);
