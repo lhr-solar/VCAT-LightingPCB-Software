@@ -116,6 +116,125 @@ void matthews_pattner(void) {
 }
 
 /**
+ * @brief  Turn indicator animation :P
+ */
+void turn_ind(void) {
+    /* ============ CONFIG ============ */
+    #define TURN_ANIMATE        1               // 1 = fill animation, 0 = static blink
+    #define TURN_DIR_FORWARD    1               // 1 = fill from idx 1 -> end, 0 = end -> idx 1
+
+    /* Color (RGBW). Amber = (255, 100, 0, 0). White = (0, 0, 0, 255). */
+    #define TURN_R              255
+    #define TURN_G              100
+    #define TURN_B              0
+    #define TURN_W              0
+    /* ================================= */
+
+    #define TOTAL_LEDS      (4 * MATTHEW_NUM_QUAD_CHIPS)
+    #define FIRST_ACTIVE    1                   // skip LED 0 (buggy)
+    #define ACTIVE_LEDS     (TOTAL_LEDS - FIRST_ACTIVE)
+
+    /* Frame timing (main loop runs every ~10ms) */
+    #define FRAME_MS         10
+    #define FRAMES_PER_LED  (20 / FRAME_MS)
+    #define HOLD_FRAMES     (60 / FRAME_MS)
+    #define BLINK_FRAMES    (250 / FRAME_MS)    // half-period for static blink mode
+
+    /* Animation states */
+    enum { TURN_FILLING, TURN_HOLD_FULL, TURN_EMPTYING, TURN_HOLD_EMPTY };
+
+    static int fill_pos    = 0;             // 0 = empty, ACTIVE_LEDS = full
+    static int empty_pos   = 0;             // index up to which LEDs have been turned off (from idx 1)
+    static int state       = TURN_FILLING;
+    static int frame_count = 0;
+    static int blink_on    = 0;             // for static blink mode
+
+    /* Color packed as 0xWWRRGGBB to match matthews_pattner bit layout */
+    const uint32_t color = ((uint32_t)TURN_W << 24) | (TURN_R << 16) | (TURN_G << 8) | TURN_B;
+
+    frame_count++;
+
+#if TURN_ANIMATE
+    switch (state) {
+        case TURN_FILLING:
+            if (frame_count >= FRAMES_PER_LED) {
+                frame_count = 0;
+                fill_pos++;
+                if (fill_pos >= ACTIVE_LEDS) {
+                    fill_pos = ACTIVE_LEDS;
+                    state = TURN_HOLD_FULL;
+                }
+            }
+            break;
+
+        case TURN_HOLD_FULL:
+            if (frame_count >= HOLD_FRAMES) {
+                frame_count = 0;
+                state = TURN_EMPTYING;
+            }
+            break;
+
+        case TURN_EMPTYING:
+            if (frame_count >= FRAMES_PER_LED) {
+                frame_count = 0;
+                empty_pos++;
+                if (empty_pos >= ACTIVE_LEDS) {
+                    empty_pos = ACTIVE_LEDS;
+                    state = TURN_HOLD_EMPTY;
+                }
+            }
+            break;
+
+        case TURN_HOLD_EMPTY:
+            if (frame_count >= HOLD_FRAMES) {
+                frame_count = 0;
+                empty_pos = 0;          // reset for next cycle
+                fill_pos = 0;
+                state = TURN_FILLING;
+            }
+            break;
+    }
+#else
+    /* Static blink: toggle all LEDs on/off every BLINK_FRAMES */
+    if (frame_count >= BLINK_FRAMES) {
+        frame_count = 0;
+        blink_on = !blink_on;
+    }
+#endif
+
+    for (int led = 0; led < TOTAL_LEDS; led++) {
+        uint32_t led_color = 0;
+
+        /* Map LED index to position along the animation axis based on direction */
+#if TURN_DIR_FORWARD
+        int active_idx = led - FIRST_ACTIVE;                    // 0 at idx 1, grows outward
+#else
+        int active_idx = (TOTAL_LEDS - 1) - led;                // 0 at last LED, grows toward idx 1
+#endif
+
+        if (led < FIRST_ACTIVE) {
+            led_color = 0; // skip first segment
+        }
+#if TURN_ANIMATE
+        else if (state == TURN_FILLING)   led_color = (active_idx < fill_pos)  ? color : 0;
+        else if (state == TURN_HOLD_FULL) led_color = color;
+        else if (state == TURN_EMPTYING)  led_color = (active_idx < empty_pos) ? 0 : color; // off window grows from start, rest stays lit
+        else                              led_color = 0;        // TURN_HOLD_EMPTY
+#else
+        else                              led_color = blink_on ? color : 0;
+#endif
+
+        uint32_t bit_index = 0;
+        for (int i = 31; i >= 0; i--) {
+            uint32_t bit = led_color & (1 << i);
+            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
+            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
+            bit_index++;
+        }
+    }
+}
+
+/**
  * @brief  DMA transfer complete callback - stops PWM output after full frame.
  */
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
@@ -156,9 +275,7 @@ const Color palette[] = {
 /**
  * @brief  Linear interpolation between two uint8 values.
  */
-static inline uint8_t lerp(uint8_t a, uint8_t b, uint8_t t) {
-    return a + (((int)(b - a) * t) >> 8);
-}
+static inline uint8_t lerp(uint8_t a, uint8_t b, uint8_t t) { return a + (((int)(b - a) * t) >> 8); }
 
 /**
  * @brief  Compute a luminance-based alpha value for the palette fade effect.
@@ -249,7 +366,8 @@ int main(void) {
 
 	while (1) {
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-		matthews_pattner();
+		//matthews_pattner();
+		turn_ind();
 		__HAL_TIM_SET_COUNTER(&htim16, 0); // reset counter so first pulse is clean
 		HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
 		HAL_Delay(10);
