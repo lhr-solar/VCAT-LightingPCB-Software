@@ -1,5 +1,5 @@
-build/main.o: Core/Src/main.c Core/Inc/main.h \
- Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h \
+build/can_app.o: Core/Src/can_app.c Core/Inc/can_app.h Core/Inc/bsp.h \
+ Core/Inc/main.h Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h \
  Core/Inc/stm32l4xx_hal_conf.h \
  Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rcc.h \
  Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_def.h \
@@ -27,8 +27,10 @@ build/main.o: Core/Src/main.c Core/Inc/main.h \
  Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h \
  Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h \
  Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h \
- Core/Inc/lighting_config.h Core/Inc/bsp.h Core/Inc/main.h \
- Core/Inc/lighting.h Core/Inc/lighting_config.h Core/Inc/can_app.h
+ Core/Inc/lighting.h Core/Inc/lighting_config.h \
+ Core/Inc/lighting_config.h
+Core/Inc/can_app.h:
+Core/Inc/bsp.h:
 Core/Inc/main.h:
 Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h:
 Core/Inc/stm32l4xx_hal_conf.h:
@@ -60,9 +62,6 @@ Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim.h:
 Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h:
 Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h:
 Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h:
-Core/Inc/lighting_config.h:
-Core/Inc/bsp.h:
-Core/Inc/main.h:
 Core/Inc/lighting.h:
 Core/Inc/lighting_config.h:
-Core/Inc/can_app.h:
+Core/Inc/lighting_config.h:

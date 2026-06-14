@@ -32,6 +32,9 @@ Core/Startup/startup_stm32l431cbtx.s
 # C sources
 C_SOURCES = \
 Core/Src/main.c \
+Core/Src/lighting.c \
+Core/Src/bsp.c \
+Core/Src/can_app.c \
 Core/Src/stm32l4xx_it.c \
 Core/Src/stm32l4xx_hal_msp.c \
 Core/Src/system_stm32l4xx.c \
