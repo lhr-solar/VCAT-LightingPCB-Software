@@ -1,13 +1,144 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main_can.c
+  * @brief          : Main with CAN integration matching LightingCAN.dbc
+  *
+  * Parses Lighting_Command (ID 0x660) and broadcasts Lighting_*_Status
+  * (ID 0x670 + BOARD_ID_OFFSET) at 10 Hz.
+  *
+  * NOTE: This is an alternate main. To use it, exclude Core/Src/main.c from the
+  * build (or rename it) and include this file instead.
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
 #include "main.h"
 #include <stdio.h>
+#include <string.h>
 #include <stm32l4xx_hal_can.h>
 
-TIM_HandleTypeDef  htim16;
-DMA_HandleTypeDef  hdma_tim16_ch1_up;
-CAN_HandleTypeDef  hcan1;
+/* ============================================================================
+ *  BOARD CONFIGURATION
+ *  Pick which physical board this firmware is for. Affects status TX ID and
+ *  which indicator side (left/right) the board responds to.
+ * ============================================================================ */
+#define BOARD_FRONT     0
+#define BOARD_LEFT      1
+#define BOARD_REAR      2
+#define BOARD_RIGHT     3
+#define BOARD_CANOPY    4
+
+#ifndef BOARD_ID
+  #define BOARD_ID      BOARD_REAR        /* <-- change per build target */
+#endif
+
+/* CAN IDs */
+#define CAN_ID_LIGHTING_COMMAND     0x660
+#define CAN_ID_STATUS_FRONT         0x670
+#define CAN_ID_STATUS_LEFT          0x671
+#define CAN_ID_STATUS_REAR          0x672
+#define CAN_ID_STATUS_RIGHT         0x673
+#define CAN_ID_STATUS_CANOPY        0x674
+
+/* Per-board derived constants */
+#if   BOARD_ID == BOARD_FRONT
+    #define MY_STATUS_ID            CAN_ID_STATUS_FRONT
+    #define RESPONDS_TO_LEFT        1
+    #define RESPONDS_TO_RIGHT       1
+    #define HEADLIGHT_R             0
+    #define HEADLIGHT_G             0
+    #define HEADLIGHT_B             0
+    #define HEADLIGHT_W             255
+    #define MATTHEW_NUM_QUAD_CHIPS      8
+#elif BOARD_ID == BOARD_LEFT
+    #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
+    #define RESPONDS_TO_LEFT        1
+    #define RESPONDS_TO_RIGHT       0
+    #define HEADLIGHT_R             0
+    #define HEADLIGHT_G             0
+    #define HEADLIGHT_B             0
+    #define HEADLIGHT_W             0       /* side panel - no headlight by default */
+    #define MATTHEW_NUM_QUAD_CHIPS      8
+#elif BOARD_ID == BOARD_REAR
+    #define MY_STATUS_ID            CAN_ID_STATUS_REAR
+    #define RESPONDS_TO_LEFT        1
+    #define RESPONDS_TO_RIGHT       1
+    #define HEADLIGHT_R             64     /* rear "headlight" = tail light, red */
+    #define HEADLIGHT_G             0
+    #define HEADLIGHT_B             0
+    #define HEADLIGHT_W             0
+    #define MATTHEW_NUM_QUAD_CHIPS      11
+#elif BOARD_ID == BOARD_RIGHT
+    #define MY_STATUS_ID            CAN_ID_STATUS_RIGHT
+    #define RESPONDS_TO_LEFT        0
+    #define RESPONDS_TO_RIGHT       1
+    #define HEADLIGHT_R             0
+    #define HEADLIGHT_G             0
+    #define HEADLIGHT_B             0
+    #define HEADLIGHT_W             0
+    #define MATTHEW_NUM_QUAD_CHIPS      8
+#elif BOARD_ID == BOARD_CANOPY
+    #define MY_STATUS_ID            CAN_ID_STATUS_CANOPY
+    #define RESPONDS_TO_LEFT        1
+    #define RESPONDS_TO_RIGHT       1
+    #define HEADLIGHT_R             0
+    #define HEADLIGHT_G             0
+    #define HEADLIGHT_B             0
+    #define HEADLIGHT_W             255
+    #define MATTHEW_NUM_QUAD_CHIPS      8
+#else
+    #error "BOARD_ID must be one of BOARD_FRONT/LEFT/REAR/RIGHT/CANOPY"
+#endif
+
+/* Watchdog: turn LEDs off if no command arrives within this many ms */
+#define COMMAND_WATCHDOG_MS         500
+#define STATUS_TX_PERIOD_MS         100      /* 10 Hz status */
+#define MAIN_LOOP_PERIOD_MS         10
+
+/* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
+#define FAULT_OK                    0
+#define FAULT_ADDR_LED_UNDER        1
+#define FAULT_LED0_UNDER            2
+#define FAULT_LED1_UNDER            3
+#define FAULT_ADDR_LED_OVER         4
+#define FAULT_LED0_OVER             5
+#define FAULT_LED1_OVER             6
+#define FAULT_LIGHT_CMD_WATCHDOG    7
+#define FAULT_WATCHDOG              8
+
+/* WS2812 / WS2814 frame */
+#define NUM_STEPS                   (32 * 4 * MATTHEW_NUM_QUAD_CHIPS)
+#define LOW                         30
+#define HI                          41
+#define TOTAL_LEDS                  (4 * MATTHEW_NUM_QUAD_CHIPS)
+#define FIRST_ACTIVE                1
+
+/* ============================================================================
+ *  ANIMATION MODE
+ *  Compile-time switch for the animated patterns (brake fill, turn-indicator
+ *  sweep).
+ *    ANIM_ON  : run the full fill/sweep animations.
+ *    ANIM_OFF : skip animation - LEDs are solid-on while the command is active
+ *               and off otherwise.
+ *  Set ANIMATION_MODE to ANIM_ON or ANIM_OFF for this build.
+ * ============================================================================ */
+#define ANIM_OFF        0
+#define ANIM_ON         1
+
+#ifndef ANIMATION_MODE
+  #define ANIMATION_MODE  1
+#endif
+
+/* ============================================================================
+ *  Peripheral handles (defined in HAL init code below)
+ * ============================================================================ */
+CAN_HandleTypeDef hcan1;
+TIM_HandleTypeDef htim16;
+DMA_HandleTypeDef hdma_tim16_ch1_up;
 UART_HandleTypeDef huart1;
 
-/* Private function prototypes -----------------------------------------------*/
+/* Forward declarations for HAL init from STM32CubeMX */
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
@@ -15,782 +146,541 @@ static void MX_TIM16_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_USART1_UART_Init(void);
 
-uint32_t smooth_palette(void);
+/* ============================================================================
+ *  Application state - set by CAN RX, read by main loop
+ * ============================================================================ */
+typedef struct {
+    uint8_t headlights;
+    uint8_t left_indicator;
+    uint8_t right_indicator;
+    uint8_t blink_sync;
+    uint8_t brake;
+    uint8_t bps_strobe;
+    uint8_t custom_mode;            /* 0-3 */
+} LightingCommand;
 
-/* ---- WS2812 LED Configuration ---- */
-#define MATTHEW_NUM_QUAD_CHIPS  8
-#define NUM_STEPS               (32 * 4 * MATTHEW_NUM_QUAD_CHIPS)
-#define LOW                     30
-#define HI                      41
+static volatile LightingCommand cmd        = {0};
+static volatile uint32_t last_cmd_tick     = 0;
+static volatile uint8_t  board_fault       = FAULT_OK;
 
-uint32_t led_pattern[32 * 4 * MATTHEW_NUM_QUAD_CHIPS];
-uint32_t ledNum = 0;
+/* WS2814 DMA buffer (one PWM duty value per bit) */
+uint32_t led_pattern[NUM_STEPS];
 
-/* LED mode flags (set via CAN) */
-uint8_t rgb = 1;
-uint8_t burntOrange = 0;
-uint8_t fade = 0;
-uint8_t braking = 1;        // dummy: set to 1 while brake is pressed
-uint8_t bps_strobe = 1;     // dummy: set to 1 to enable BPS strobe
-
-/* Burnt orange colour definition */
-#define BURNT_ORANGE_R      199
-#define BURNT_ORANGE_G      104
-#define BURNT_ORANGE_B      35
-#define BURNT_ORANGE_ARGB   ((BURNT_ORANGE_R << 16) | (BURNT_ORANGE_G << 8) | (BURNT_ORANGE_B))
-
-/* Sine lookup table for smooth rainbow generation */
-const uint8_t sin_table[256] = {
-	0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-    0,   0,   0,   1,   1,   1,   1,   1,   2,   2,   2,   3,   3,   4,   4,   5,
-    5,   6,   7,   8,   9,   10,  11,  12,  13,  15,  16,  17,  19,  20,  22,  24,
-   	25,  27,  29,  31,  33,  35,  37,  40,  42,  44,  47,  49,  52,  55,  58,  61,
-   	64,  67,  70,  73,  77,  80,  84,  87,  91,  95,  99,  103, 107, 111, 115, 119,
-  	123, 128, 132, 137, 141, 146, 151, 156, 161, 166, 171, 176, 181, 187, 192, 198,
-  	203, 209, 214, 220, 226, 232, 238, 244, 250, 255, 255, 255, 255, 255, 255, 255,
-  	255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 250, 244, 238, 232, 226, 220,
-  	214, 209, 203, 198, 192, 187, 181, 176, 171, 166, 161, 156, 151, 146, 141, 137,
-  	132, 128, 123, 119, 115, 111, 107, 103, 99,  95,  91,  87,  84,  80,  77,  73,
-   	70,  67,  64,  61,  58,  55,  52,  49,  47,  44,  42,  40,  37,  35,  33,  31,
-   	29,  27,  25,  24,  22,  20,  19,  17,  16,  15,  13,  12,  11,  10,  9,   8,
-    7,   6,   5,   5,   4,   4,   3,   3,   2,   2,   2,   1,   1,   1,   1,   1,
-    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
-};
+/* ============================================================================
+ *  LED PATTERN HELPERS
+ * ============================================================================ */
 
 /**
- * @brief  Generate a smoothly cycling rainbow colour using the sine table.
- * @retval 24-bit RGB colour packed as 0x00RRGGBB.
+ * @brief Write a packed RGBW colour into the DMA buffer for a given LED index.
+ *        Bit layout: bits 31-24 = W, 23-16 = R, 15-8 = G, 7-0 = B.
  */
-uint32_t smooth_rainbow_int(void) {
-    static int t = 0;
-    t++;
+static inline void write_led(int led, uint32_t color) {
+    uint32_t bit_index = 0;
+    for (int i = 31; i >= 0; i--) {
+        uint32_t bit = color & (1u << i);
+        led_pattern[bit_index + (led * 32)] = (bit == 0) ? LOW : HI;
+        bit_index++;
+    }
+}
 
-    uint8_t r = sin_table[(t) & 255];
-    uint8_t g = sin_table[(t + 85) & 255];   // 256/3 ≈ 85
-    uint8_t b = sin_table[(t + 170) & 255];  // 2×85
-    return (r << 16) | (g << 8) | b;
+static inline uint32_t pack_rgbw(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
+    return ((uint32_t)w << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
+/* ============================================================================
+ *  PATTERN FUNCTIONS
+ *  Each function fills `led_pattern` for one frame. Designed to be called once
+ *  per main-loop tick (every MAIN_LOOP_PERIOD_MS).
+ * ============================================================================ */
+
+/**
+ * @brief All LEDs off (with first segment skipped as always).
+ */
+static void pattern_off(void) {
+    for (int led = 0; led < TOTAL_LEDS; led++) write_led(led, 0);
 }
 
 /**
- * @brief  Generate a hard-stepping rainbow colour cycling through 1536 steps.
- * @retval 24-bit RGB colour packed as 0x00RRGGBB.
+ * @brief Solid headlight colour for this board.
  */
-uint32_t get_32bit_value(void) {
-    static uint32_t counter = 0;
-    counter++;
-
-    int x = counter % 1536;
-    int r, g, b;
-
-    if (x < 256)        { r = 255;      g = x;        b = 0;        }
-    else if (x < 512)   { r = 511 - x;  g = 255;      b = 0;        }
-    else if (x < 768)   { r = 0;        g = 255;      b = x - 512;  }
-    else if (x < 1024)  { r = 0;        g = 1023 - x; b = 255;      }
-    else if (x < 1280)  { r = x - 1024; g = 0;        b = 255;      }
-    else                { r = 255;      g = 0;        b = 1535 - x; }
-
-    return (r << 16) | (g << 8) | b;
-}
-
-/**
- * @brief  Fill the WS2812 DMA buffer with the current LED pattern.
- *         Selects colour based on active mode flag (rgb / burntOrange / fade).
- */
-void matthews_pattner(void) {
-    uint32_t color;
-
-    if 		(rgb == 1) 	  color = smooth_rainbow_int(); /* 32 bits of A, R, G, B */
-    else if (burntOrange) color = BURNT_ORANGE_ARGB;
-    else if (fade)        color = smooth_palette();
-    else                  color = 0;
-
-    for (int led = 0; led < (4 * MATTHEW_NUM_QUAD_CHIPS); led++) {
-        uint32_t led_color = (led < 1) ? 0 : color;	// skip first segment bcs they bug out for some reason.
-
-        uint32_t bit_index = 0;
-        for (int i = 31; i >= 0; i--) {
-            uint32_t bit = led_color & (1 << i);
-            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
-            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
-            bit_index++;
-        }
+static void pattern_headlight(void) {
+    uint32_t c = pack_rgbw(HEADLIGHT_R, HEADLIGHT_G, HEADLIGHT_B, HEADLIGHT_W);
+    for (int led = 0; led < TOTAL_LEDS; led++) {
+        write_led(led, (led < FIRST_ACTIVE) ? 0 : c);
     }
 }
 
 /**
- * @brief White.
+ * @brief Turn indicator (amber, fill in -> hold -> fill out -> hold).
  */
-void full_white(void) {
-    uint32_t color = 255 << 24;
+static void pattern_turn_ind(void) {
+    #define ACTIVE_LEDS         (TOTAL_LEDS - FIRST_ACTIVE)
+    #define TURN_FRAMES_PER_LED (20 / MAIN_LOOP_PERIOD_MS)
+    #define TURN_HOLD_FRAMES    (60 / MAIN_LOOP_PERIOD_MS)
 
-    for (int led = 0; led < (4 * MATTHEW_NUM_QUAD_CHIPS); led++) {
-        uint32_t led_color = (led < 1) ? 0 : color;	// skip first segment bcs they bug out for some reason.
+    /* Amber: R=255, G=100, B=0, W=0 */
+    const uint32_t color = pack_rgbw(255, 100, 0, 0);
 
-        uint32_t bit_index = 0;
-        for (int i = 31; i >= 0; i--) {
-            uint32_t bit = led_color & (1 << i);
-            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
-            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
-            bit_index++;
+    /* Animations off: just light the strip solid while the indicator is on. */
+    if (ANIMATION_MODE == ANIM_OFF) {
+        for (int led = 0; led < TOTAL_LEDS; led++) {
+            write_led(led, (led < FIRST_ACTIVE) ? 0 : color);
         }
+        return;
     }
-}
 
-/**
- * @brief  Turn indicator animation :P
- */
-void turn_ind(void) {
-    /* ============ CONFIG ============ */
-    #define TURN_ANIMATE        1               // 1 = fill animation, 0 = static blink
-    #define TURN_DIR_FORWARD    1               // 1 = fill from idx 1 -> end, 0 = end -> idx 1
+    enum { T_FILLING, T_HOLD_FULL, T_EMPTYING, T_HOLD_EMPTY };
 
-    /* Color (RGBW). Amber = (255, 100, 0, 0). White = (0, 0, 0, 255). */
-    #define TURN_R              255
-    #define TURN_G              100
-    #define TURN_B              0
-    #define TURN_W              0
-    /* ================================= */
-
-    #define TOTAL_LEDS      (4 * MATTHEW_NUM_QUAD_CHIPS)
-    #define FIRST_ACTIVE    1                   // skip LED 0 (buggy)
-    #define ACTIVE_LEDS     (TOTAL_LEDS - FIRST_ACTIVE)
-
-    /* Frame timing (main loop runs every ~10ms) */
-    #define FRAME_MS         10
-    #define FRAMES_PER_LED  (20 / FRAME_MS)
-    #define HOLD_FRAMES     (60 / FRAME_MS)
-    #define BLINK_FRAMES    (250 / FRAME_MS)    // half-period for static blink mode
-
-    /* Animation states */
-    enum { TURN_FILLING, TURN_HOLD_FULL, TURN_EMPTYING, TURN_HOLD_EMPTY };
-
-    static int fill_pos    = 0;             // 0 = empty, ACTIVE_LEDS = full
-    static int empty_pos   = 0;             // index up to which LEDs have been turned off (from idx 1)
-    static int state       = TURN_FILLING;
+    static int fill_pos    = 0;
+    static int empty_pos   = 0;
+    static int state       = T_FILLING;
     static int frame_count = 0;
-    static int blink_on    = 0;             // for static blink mode
-
-    /* Color packed as 0xWWRRGGBB to match matthews_pattner bit layout */
-    const uint32_t color = ((uint32_t)TURN_W << 24) | (TURN_R << 16) | (TURN_G << 8) | TURN_B;
 
     frame_count++;
-
-#if TURN_ANIMATE
     switch (state) {
-        case TURN_FILLING:
-            if (frame_count >= FRAMES_PER_LED) {
+        case T_FILLING:
+            if (frame_count >= TURN_FRAMES_PER_LED) {
                 frame_count = 0;
-                fill_pos++;
-                if (fill_pos >= ACTIVE_LEDS) {
-                    fill_pos = ACTIVE_LEDS;
-                    state = TURN_HOLD_FULL;
-                }
+                if (++fill_pos >= ACTIVE_LEDS) { fill_pos = ACTIVE_LEDS; state = T_HOLD_FULL; }
             }
             break;
-
-        case TURN_HOLD_FULL:
-            if (frame_count >= HOLD_FRAMES) {
+        case T_HOLD_FULL:
+            if (frame_count >= TURN_HOLD_FRAMES) { frame_count = 0; state = T_EMPTYING; }
+            break;
+        case T_EMPTYING:
+            if (frame_count >= TURN_FRAMES_PER_LED) {
                 frame_count = 0;
-                state = TURN_EMPTYING;
+                if (++empty_pos >= ACTIVE_LEDS) { empty_pos = ACTIVE_LEDS; state = T_HOLD_EMPTY; }
             }
             break;
-
-        case TURN_EMPTYING:
-            if (frame_count >= FRAMES_PER_LED) {
+        case T_HOLD_EMPTY:
+            if (frame_count >= TURN_HOLD_FRAMES) {
                 frame_count = 0;
-                empty_pos++;
-                if (empty_pos >= ACTIVE_LEDS) {
-                    empty_pos = ACTIVE_LEDS;
-                    state = TURN_HOLD_EMPTY;
-                }
-            }
-            break;
-
-        case TURN_HOLD_EMPTY:
-            if (frame_count >= HOLD_FRAMES) {
-                frame_count = 0;
-                empty_pos = 0;          // reset for next cycle
-                fill_pos = 0;
-                state = TURN_FILLING;
+                fill_pos = 0; empty_pos = 0;
+                state = T_FILLING;
             }
             break;
     }
-#else
-    /* Static blink: toggle all LEDs on/off every BLINK_FRAMES */
-    if (frame_count >= BLINK_FRAMES) {
-        frame_count = 0;
-        blink_on = !blink_on;
-    }
-#endif
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
         uint32_t led_color = 0;
-
-        /* Map LED index to position along the animation axis based on direction */
-#if TURN_DIR_FORWARD
-        int active_idx = led - FIRST_ACTIVE;                    // 0 at idx 1, grows outward
-#else
-        int active_idx = (TOTAL_LEDS - 1) - led;                // 0 at last LED, grows toward idx 1
-#endif
-
-        if (led < FIRST_ACTIVE) {
-            led_color = 0; // skip first segment
-        }
-#if TURN_ANIMATE
-        else if (state == TURN_FILLING)   led_color = (active_idx < fill_pos)  ? color : 0;
-        else if (state == TURN_HOLD_FULL) led_color = color;
-        else if (state == TURN_EMPTYING)  led_color = (active_idx < empty_pos) ? 0 : color; // off window grows from start, rest stays lit
-        else                              led_color = 0;        // TURN_HOLD_EMPTY
-#else
-        else                              led_color = blink_on ? color : 0;
-#endif
-
-        uint32_t bit_index = 0;
-        for (int i = 31; i >= 0; i--) {
-            uint32_t bit = led_color & (1 << i);
-            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
-            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
-            bit_index++;
-        }
+        int active_idx = led - FIRST_ACTIVE;
+        if      (led < FIRST_ACTIVE)    led_color = 0;
+        else if (state == T_FILLING)    led_color = (active_idx < fill_pos)  ? color : 0;
+        else if (state == T_HOLD_FULL)  led_color = color;
+        else if (state == T_EMPTYING)   led_color = (active_idx < empty_pos) ? 0 : color;
+        else                            led_color = 0;
+        write_led(led, led_color);
     }
 }
 
+/* ============================================================================
+ *  BRAKE LIGHT
+ *  Red bar that grows outward from the centre of the strip to both ends, then
+ *  holds solid for as long as the brake is applied. The sweep restarts on each
+ *  new brake press (rising edge detected in render_frame -> brake_reset()).
+ *
+ *  All geometry derives from TOTAL_LEDS (= 4 * MATTHEW_NUM_QUAD_CHIPS), so it
+ *  scales automatically with the number of quad chips. Nothing here is shared
+ *  with the turn-indicator state machine.
+ * ============================================================================ */
+
+/* Duration of each one-LED-per-side expansion step, in main-loop frames. */
+#define BRAKE_FRAMES_PER_STEP   (20 / MAIN_LOOP_PERIOD_MS)
+
+/* Centre LED index within the active region [FIRST_ACTIVE .. TOTAL_LEDS-1]. */
+#define BRAKE_CENTER_LED        (FIRST_ACTIVE + (TOTAL_LEDS - FIRST_ACTIVE) / 2)
+
+/* Largest radius needed to reach the farther of the two ends from the centre. */
+#define BRAKE_MAX_RADIUS \
+    (((TOTAL_LEDS - 1 - BRAKE_CENTER_LED) > (BRAKE_CENTER_LED - FIRST_ACTIVE)) \
+        ? (TOTAL_LEDS - 1 - BRAKE_CENTER_LED) \
+        : (BRAKE_CENTER_LED - FIRST_ACTIVE))
+
+static int brake_radius = 0;   /* current half-width of the lit bar */
+static int brake_frame  = 0;   /* frame counter within the current step */
+static int brake_full   = 0;   /* 1 once fully expanded -> hold solid */
+
 /**
- * @brief  Brake light animation.
- *         When `braking` goes high: fills in red from idx 1 outward and stays lit for as
- *         long as the brake is held. When `braking` goes low: fills out (off-window grows
- *         from idx 1 outward), then idles dark until the next press.
+ * @brief Restart the brake sweep from a single centre LED. Called on the rising
+ *        edge of cmd.brake, since pattern_brake() isn't run while released.
  */
-void brake_light(void) {
-    /* ============ CONFIG ============ */
-    /* Color (RGBW). Red = (255, 0, 0, 0). */
-    #define BRAKE_R     255
-    #define BRAKE_G     0
-    #define BRAKE_B     0
-    #define BRAKE_W     0
-    /* ================================= */
-
-    #define B_TOTAL_LEDS    (4 * MATTHEW_NUM_QUAD_CHIPS)
-    #define B_FIRST_ACTIVE  1                       // skip LED 0 (buggy)
-    #define B_ACTIVE_LEDS   (B_TOTAL_LEDS - B_FIRST_ACTIVE)
-
-    /* Frame timing (main loop runs every ~10ms) */
-    #define B_FRAME_MS          10
-    #define B_FRAMES_PER_LED    (20 / B_FRAME_MS)
-
-    /* Brake states */
-    enum { BRAKE_IDLE, BRAKE_FILLING, BRAKE_HELD, BRAKE_EMPTYING };
-
-    static int fill_pos    = 0;             // 0 = empty, B_ACTIVE_LEDS = full
-    static int empty_pos   = 0;             // index up to which LEDs have been turned off
-    static int state       = BRAKE_IDLE;
-    static int frame_count = 0;
-
-    /* Red packed as 0xWWRRGGBB to match matthews_pattner bit layout */
-    const uint32_t color = ((uint32_t)BRAKE_W << 24) | (BRAKE_R << 16) | (BRAKE_G << 8) | BRAKE_B;
-
-    frame_count++;
-
-    switch (state) {
-        case BRAKE_IDLE:
-            if (braking) {
-                state = BRAKE_FILLING;
-                frame_count = 0;
-                fill_pos = 0;
-            }
-            break;
-
-        case BRAKE_FILLING:
-            if (frame_count >= B_FRAMES_PER_LED) {
-                frame_count = 0;
-                fill_pos++;
-                if (fill_pos >= B_ACTIVE_LEDS) {
-                    fill_pos = B_ACTIVE_LEDS;
-                    state = BRAKE_HELD;
-                }
-            }
-            /* If brake released mid-fill, switch directly to emptying from current level */
-            if (!braking) {
-                empty_pos = B_ACTIVE_LEDS - fill_pos; // already-dark portion
-                state = BRAKE_EMPTYING;
-                frame_count = 0;
-            }
-            break;
-
-        case BRAKE_HELD:
-            /* Hold full red as long as the brake is pressed */
-            if (!braking) {
-                state = BRAKE_EMPTYING;
-                frame_count = 0;
-                empty_pos = 0;
-            }
-            break;
-
-        case BRAKE_EMPTYING:
-            if (frame_count >= B_FRAMES_PER_LED) {
-                frame_count = 0;
-                empty_pos++;
-                if (empty_pos >= B_ACTIVE_LEDS) {
-                    empty_pos = B_ACTIVE_LEDS;
-                    state = BRAKE_IDLE;
-                    fill_pos = 0;
-                    empty_pos = 0;
-                }
-            }
-            /* If user re-presses while emptying, jump back into filling at the still-lit level */
-            if (braking) {
-                fill_pos = B_ACTIVE_LEDS - empty_pos;
-                state = BRAKE_FILLING;
-                frame_count = 0;
-            }
-            break;
-    }
-
-    for (int led = 0; led < B_TOTAL_LEDS; led++) {
-        uint32_t led_color = 0;
-        int active_idx = led - B_FIRST_ACTIVE;
-
-        if (led < B_FIRST_ACTIVE)             led_color = 0;     // skip first segment
-        else if (state == BRAKE_IDLE)         led_color = 0;
-        else if (state == BRAKE_FILLING)      led_color = (active_idx < fill_pos)  ? color : 0;
-        else if (state == BRAKE_HELD)         led_color = color;
-        else if (state == BRAKE_EMPTYING)     led_color = (active_idx < empty_pos) ? 0 : color;
-
-        uint32_t bit_index = 0;
-        for (int i = 31; i >= 0; i--) {
-            uint32_t bit = led_color & (1 << i);
-            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
-            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
-            bit_index++;
-        }
-    }
+static void brake_reset(void) {
+    brake_radius = 0;
+    brake_frame  = 0;
+    brake_full   = 0;
 }
 
 /**
- * @brief  BPS strobe - flashes all LEDs white at 90 pulses/min (1.5 Hz).
- *         Short bright flash followed by a longer off period (strobe feel).
- *         Skips LED 0 (buggy first segment). Active when `bps_strobe` is non-zero.
+ * @brief Draw one brake frame: expand red from the centre outward, then hold.
  */
-void BPS_Strobe(void) {
-    /* ============ CONFIG ============ */
-    /* White via dedicated W channel of WS2814. */
-    #define BPS_R       0
-    #define BPS_G       0
-    #define BPS_B       0
-    #define BPS_W       255
-    /* ================================= */
+static void pattern_brake(void) {
+    const uint32_t color = pack_rgbw(255, 0, 0, 0);
 
-    #define S_TOTAL_LEDS    (4 * MATTHEW_NUM_QUAD_CHIPS)
-    #define S_FIRST_ACTIVE  1                   // skip LED 0 (buggy)
+    /* Animations off: solid red across the strip while the brake is applied. */
+    if (ANIMATION_MODE == ANIM_OFF) {
+        for (int led = 0; led < TOTAL_LEDS; led++) {
+            write_led(led, (led < FIRST_ACTIVE) ? 0 : color);
+        }
+        return;
+    }
 
-    /* Frame timing (main loop runs every ~10ms) */
-    #define S_FRAME_MS          10
+    /* Advance the expansion one step at a time until both ends are reached. */
+    if (!brake_full) {
+        if (++brake_frame >= BRAKE_FRAMES_PER_STEP) {
+            brake_frame = 0;
+            if (++brake_radius >= BRAKE_MAX_RADIUS) {
+                brake_radius = BRAKE_MAX_RADIUS;
+                brake_full   = 1;
+            }
+        }
+    }
 
-    /* 90 pulses/min = 1.5 Hz -> 666 ms period.
-     * Use a short flash for that classic strobe look. */
-    #define S_PERIOD_FRAMES     (667 / S_FRAME_MS)  // ~67 frames per pulse
-    #define S_ON_FRAMES         (60  / S_FRAME_MS)  // ~60 ms flash on
+    int lo = BRAKE_CENTER_LED - brake_radius;
+    int hi = BRAKE_CENTER_LED + brake_radius;
 
-    static int frame_count = 0;
-
-    /* White packed as 0xWWRRGGBB */
-    const uint32_t color = ((uint32_t)BPS_W << 24) | (BPS_R << 16) | (BPS_G << 8) | BPS_B;
-
-    frame_count++;
-    if (frame_count >= S_PERIOD_FRAMES) frame_count = 0;
-    
-    int strobe_on = (frame_count < S_ON_FRAMES);
-
-    for (int led = 0; led < S_TOTAL_LEDS; led++) {
+    for (int led = 0; led < TOTAL_LEDS; led++) {
         uint32_t led_color;
-
-        if (led < S_FIRST_ACTIVE) led_color = 0;            // skip first segment
-        else                      led_color = strobe_on ? color : 0;
-
-        uint32_t bit_index = 0;
-        for (int i = 31; i >= 0; i--) {
-            uint32_t bit = led_color & (1 << i);
-            if (bit == 0) { led_pattern[bit_index + (led * 32)] = LOW; }
-            if (bit != 0) { led_pattern[bit_index + (led * 32)] = HI;  }
-            bit_index++;
-        }
+        if (led < FIRST_ACTIVE)      led_color = 0;
+        else if (brake_full)         led_color = color;
+        else if (led >= lo && led <= hi) led_color = color;
+        else                         led_color = 0;
+        write_led(led, led_color);
     }
 }
 
 /**
- * @brief  DMA transfer complete callback - stops PWM output after full frame.
+ * @brief BPS strobe at 90 pulses/min (1.5 Hz), short white flash.
  */
+static void pattern_bps_strobe(void) {
+    #define STROBE_PERIOD_FRAMES    (667 / MAIN_LOOP_PERIOD_MS)
+    #define STROBE_ON_FRAMES        (60  / MAIN_LOOP_PERIOD_MS)
+
+    static int frame_count = 0;
+    const uint32_t color = pack_rgbw(0, 0, 0, 255);
+
+    if (++frame_count >= STROBE_PERIOD_FRAMES) frame_count = 0;
+    int on = (frame_count < STROBE_ON_FRAMES);
+
+    for (int led = 0; led < TOTAL_LEDS; led++) {
+        write_led(led, (led < FIRST_ACTIVE) ? 0 : (on ? color : 0));
+    }
+}
+
+/**
+ * @brief Custom modes (1=rgb rainbow, 2=burnt orange, 3=palette fade, 0=off).
+ *        TODO: port the existing matthews_pattner / smooth_palette logic here.
+ *        For now just shows headlight colour for any non-zero mode.
+ */
+static void pattern_custom_mode(uint8_t mode) {
+    if (mode == 0) { pattern_off(); return; }
+    /* TODO: integrate smooth_rainbow_int / smooth_palette / burnt orange */
+    pattern_headlight();
+}
+
+/* ============================================================================
+ *  PRIORITY DISPATCH
+ *  Decides which pattern to draw based on the current command flags and which
+ *  side this board is on.
+ * ============================================================================ */
+static void render_frame(void) {
+    /* Watchdog: if no command in COMMAND_WATCHDOG_MS, blank everything */
+    if ((HAL_GetTick() - last_cmd_tick) > COMMAND_WATCHDOG_MS) {
+        board_fault = FAULT_LIGHT_CMD_WATCHDOG;
+        pattern_off();
+        return;
+    }
+    board_fault = FAULT_OK;
+
+    /* Is a turn indicator active for this board's side? */
+    uint8_t turn_active =
+        (RESPONDS_TO_LEFT  && cmd.left_indicator) ||
+        (RESPONDS_TO_RIGHT && cmd.right_indicator);
+
+    /* Priority: brake > turn > strobe > headlight > custom > off */
+    static uint8_t prev_brake = 0;
+    if (cmd.brake) {
+        /* Detect rising edge of brake to restart the expand animation, since
+         * pattern_brake() isn't called while the brake is released. */
+        if (!prev_brake) brake_reset();
+        prev_brake = 1;
+        pattern_brake();
+    } else {
+        prev_brake = 0;
+        if      (turn_active)           pattern_turn_ind();
+        else if (cmd.bps_strobe)        pattern_bps_strobe();
+        else if (cmd.headlights)        pattern_headlight();
+        else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
+        else                            pattern_off();
+    }
+}
+
+/* ============================================================================
+ *  CAN RX - parses Lighting_Command (0x660, 1 byte) per DBC bit layout
+ * ============================================================================ */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
+    if (hcan->Instance != CAN1) return;
+
+    CAN_RxHeaderTypeDef rx;
+    uint8_t data[8];
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx, data) != HAL_OK) return;
+
+    if (rx.IDE == CAN_ID_STD && rx.StdId == CAN_ID_LIGHTING_COMMAND && rx.DLC >= 1) {
+        uint8_t b = data[0];
+        cmd.headlights       = (b >> 0) & 0x01;
+        cmd.left_indicator   = (b >> 1) & 0x01;
+        cmd.right_indicator  = (b >> 2) & 0x01;
+        cmd.blink_sync       = (b >> 3) & 0x01;
+        cmd.brake            = (b >> 4) & 0x01;
+        cmd.bps_strobe       = (b >> 5) & 0x01;
+        cmd.custom_mode      = (b >> 6) & 0x03;
+        last_cmd_tick = HAL_GetTick();
+
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
+    }
+}
+
+/* ============================================================================
+ *  CAN TX - Lighting_*_Status (8 bytes per DBC)
+ *
+ *  Bit layout (little-endian, Intel):
+ *   [0  ..  7] : board_fault           (8 bits)
+ *   [8]        : headlight             (1 bit)
+ *   [9]        : left_indicator        (1 bit)
+ *   [10]       : right_indicator       (1 bit)
+ *   [11]       : bps_strobe            (1 bit)
+ *   [12]       : brakelight            (1 bit)
+ *   [13 .. 14] : custom_mode           (2 bits)
+ *   [15]       : reserved              (1 bit)
+ *   [16 .. 27] : addr_led_current_mA   (12 bits, scale 0.001 A)
+ *   [28 .. 31] : reserved              (4 bits)
+ *   [32 .. 47] : led0_current_mA       (16 bits, scale 0.001 A)
+ *   [48 .. 63] : led1_current_mA       (16 bits, scale 0.001 A)
+ * ============================================================================ */
+static void send_status(void) {
+    CAN_TxHeaderTypeDef tx_header = {0};
+    tx_header.StdId = MY_STATUS_ID;
+    tx_header.IDE   = CAN_ID_STD;
+    tx_header.RTR   = CAN_RTR_DATA;
+    tx_header.DLC   = 8;
+    tx_header.TransmitGlobalTime = DISABLE;
+
+    uint8_t  data[8] = {0};
+
+    /* TODO: replace with real ADC readings for the LED current sensors */
+    uint16_t addr_led_current_mA = 0;   /* 12-bit, max 4095 */
+    uint16_t led0_current_mA     = 0;   /* 16-bit */
+    uint16_t led1_current_mA     = 0;   /* 16-bit */
+
+    data[0] = board_fault;
+    data[1] = (cmd.headlights      << 0)
+            | (cmd.left_indicator  << 1)
+            | (cmd.right_indicator << 2)
+            | (cmd.bps_strobe      << 3)
+            | (cmd.brake           << 4)
+            | ((cmd.custom_mode & 0x03) << 5);
+    /* bit 16 = byte 2 bit 0; pack 12-bit current across bytes 2 and bottom nibble of 3 */
+    data[2] = addr_led_current_mA & 0xFF;
+    data[3] = (addr_led_current_mA >> 8) & 0x0F;    /* low nibble of byte 3 */
+    /* bytes 4-5: led0, bytes 6-7: led1 (little-endian) */
+    data[4] = led0_current_mA & 0xFF;
+    data[5] = (led0_current_mA >> 8) & 0xFF;
+    data[6] = led1_current_mA & 0xFF;
+    data[7] = (led1_current_mA >> 8) & 0xFF;
+
+    uint32_t mailbox;
+    HAL_CAN_AddTxMessage(&hcan1, &tx_header, data, &mailbox);
+}
+
+/* ============================================================================
+ *  PWM/DMA callback
+ * ============================================================================ */
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
-    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
-    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
-    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_12);
-    if (htim->Instance == TIM16) HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
-}
-
-/* ---- Smooth palette fade (New matthew code) ---- */
-/* --------------------------------------------------------------- */
-
-typedef struct { uint8_t r, g, b; } Color;
-
-const Color palette[] = {
-    {255, 255, 255},  // White
-    {254, 239, 180},
-    {254, 202,  88},
-    {254, 134,  38},
-    {229,  29, 124},
-    {115,  28, 151},
-    { 32,  77, 142}, // Blue
-
-    {115,  28, 151},
-    {229,  29, 124},
-    {254, 134,  38},
-    {254, 202,  88},
-    {254, 239, 180},
-    {255, 255, 255}  // White
-};
-
-#define NUM_COLORS (sizeof(palette) / sizeof(palette[0]))
-
-/**
- * @brief  Linear interpolation between two uint8 values.
- */
-static inline uint8_t lerp(uint8_t a, uint8_t b, uint8_t t) { return a + (((int)(b - a) * t) >> 8); }
-
-/**
- * @brief  Compute a luminance-based alpha value for the palette fade effect.
- *         Compressed so colours stay saturated (range 0-180 instead of 0-255).
- */
-uint8_t compute_alpha(uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t y = (77 * r + 150 * g + 29 * b) >> 8;
-
-    // compress effect so colors stay saturated
-    return (y * 180) >> 8; // 0-180 instead of 0-255
-}
-
-/**
- * @brief  Generate a smoothly interpolated colour from the palette array.
- * @retval 32-bit WRGB colour.
- */
-uint32_t smooth_palette(void) {
-    static uint16_t t = 0;
-    t += 10;
-
-    int segment   = (t >> 8) % (NUM_COLORS - 1);
-    uint8_t local_t = t & 0xFF;
-
-    Color a = palette[segment];
-    Color b = palette[segment + 1];
-
-    uint8_t r    = lerp(a.r, b.r, local_t);
-    uint8_t g    = lerp(a.g, b.g, local_t);
-    uint8_t bcol = lerp(a.b, b.b, local_t);
-
-    uint8_t alpha = compute_alpha(r, g, bcol);
-
-    return (alpha << 24) | (r << 16) | (g << 8) | bcol;
-}
-
-/* --------------------------------------------------------------- */
-
-/**
-  * @brief  Main
-  */
-int main(void) {
-	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	HAL_Init();
-
-	/* Configure the system clock */
-	SystemClock_Config();
-
-	/* Initialize all configured peripherals */
-	MX_GPIO_Init();
-	MX_DMA_Init();
-	MX_TIM16_Init();
-	MX_CAN1_Init();
-	MX_USART1_UART_Init();
-
-	// TODO: put this in a function?
-	/* ---- CAN filter configuration (accept all) ---- */
-	CAN_FilterTypeDef filterConfig;
-	filterConfig.FilterIdHigh         = 0x0000;
-	filterConfig.FilterIdLow          = 0x0000;
-	filterConfig.FilterMaskIdHigh     = 0x0000;
-	filterConfig.FilterMaskIdLow      = 0x0000;
-	filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
-	filterConfig.FilterBank           = 0;
-	filterConfig.FilterMode           = CAN_FILTERMODE_IDMASK;
-	filterConfig.FilterScale          = CAN_FILTERSCALE_32BIT;
-	filterConfig.FilterActivation     = ENABLE;
-	filterConfig.SlaveStartFilterBank = 0;
-	HAL_CAN_ConfigFilter(&hcan1, &filterConfig);
-
-	HAL_CAN_Start(&hcan1);
-	HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-	HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
-
-	/* Fill TX header */
-	CAN_TxHeaderTypeDef txHeader;
-	txHeader.StdId              = 0x123;          // 11-bit standard CAN ID
-	txHeader.ExtId              = 0x00;           // Not used for standard ID
-	txHeader.IDE                = CAN_ID_STD;     // Standard identifier
-	txHeader.RTR                = CAN_RTR_DATA;   // Data frame (not remote)
-	txHeader.DLC                = 8;              // 8 data bytes
-	txHeader.TransmitGlobalTime = DISABLE;        // TTCM disabled
-
-	/* Fill payload (example sensor data) */
-	uint8_t txData[8] = {0};
-	uint32_t txMailbox;
-
-	// rn everything is raw
-	// TODO: can
-	while (1) {
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-		//matthews_pattner(); // RGB
-		turn_ind();			  // Amber animation 
-		//BPS_Strobe();
-		//brake_light();	  // Red animation + hold
-		//full_white();		  // What do you think
-		__HAL_TIM_SET_COUNTER(&htim16, 0); // reset counter so first pulse is clean
-		HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
-		HAL_Delay(10);
-	}
-}
-
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
-void SystemClock_Config(void) {
-	RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-	RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-	/** Configure the main internal regulator output voltage */
-	if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) Error_Handler();
-
-	/** Initializes the RCC Oscillators according to the specified parameters
-	* in the RCC_OscInitTypeDef structure. */
-	RCC_OscInitStruct.OscillatorType 		= RCC_OSCILLATORTYPE_MSI;
-	RCC_OscInitStruct.MSIState 				= RCC_MSI_ON;
-	RCC_OscInitStruct.MSICalibrationValue 	= 0;
-	RCC_OscInitStruct.MSIClockRange 		= RCC_MSIRANGE_6;
-	RCC_OscInitStruct.PLL.PLLState 			= RCC_PLL_ON;
-	RCC_OscInitStruct.PLL.PLLSource 		= RCC_PLLSOURCE_MSI;
-	RCC_OscInitStruct.PLL.PLLM 				= 1;
-	RCC_OscInitStruct.PLL.PLLN 				= 40;
-	RCC_OscInitStruct.PLL.PLLP 				= RCC_PLLP_DIV7;
-	RCC_OscInitStruct.PLL.PLLQ 				= RCC_PLLQ_DIV2;
-	RCC_OscInitStruct.PLL.PLLR 				= RCC_PLLR_DIV2;
-	if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
-
-
-	/** Initializes the CPU, AHB and APB buses clocks */
-	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK  | RCC_CLOCKTYPE_SYSCLK
-								| RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2 ;
-	RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-	RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-	RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-	RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) Error_Handler();
-}
-
-/**
-  * @brief CAN1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_CAN1_Init(void) {
-	hcan1.Instance 					= CAN1;
-	hcan1.Init.Prescaler 			= 20;
-	hcan1.Init.Mode 				= CAN_MODE_NORMAL;
-	hcan1.Init.SyncJumpWidth 		= CAN_SJW_1TQ;
-	hcan1.Init.TimeSeg1 			= CAN_BS1_13TQ;
-	hcan1.Init.TimeSeg2 			= CAN_BS2_2TQ;
-	hcan1.Init.TimeTriggeredMode 	= DISABLE;
-	hcan1.Init.AutoBusOff 			= ENABLE;
-	hcan1.Init.AutoWakeUp 			= ENABLE;
-	hcan1.Init.AutoRetransmission 	= ENABLE;
-	hcan1.Init.ReceiveFifoLocked 	= DISABLE;
-	hcan1.Init.TransmitFifoPriority = ENABLE;
-	if (HAL_CAN_Init(&hcan1) != HAL_OK) Error_Handler();
-}
-
-/**
-  * @brief TIM16 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM16_Init(void) {
-	TIM_OC_InitTypeDef sConfigOC = {0};
-	TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
-
-	htim16.Instance 				= TIM16;
-	htim16.Init.Prescaler			= 0;
-	htim16.Init.CounterMode 		= TIM_COUNTERMODE_UP;
-	htim16.Init.Period 				= 50;
-	htim16.Init.ClockDivision 		= TIM_CLOCKDIVISION_DIV1;
-	htim16.Init.RepetitionCounter 	= 0;
-	htim16.Init.AutoReloadPreload 	= TIM_AUTORELOAD_PRELOAD_DISABLE;
-	if (HAL_TIM_Base_Init(&htim16) != HAL_OK) Error_Handler();
-	if (HAL_TIM_PWM_Init(&htim16)  != HAL_OK) Error_Handler();
-
-	sConfigOC.OCMode 		= TIM_OCMODE_PWM1;
-	sConfigOC.Pulse 		= 25;
-	sConfigOC.OCPolarity 	= TIM_OCPOLARITY_HIGH;
-	sConfigOC.OCNPolarity 	= TIM_OCNPOLARITY_HIGH;
-	sConfigOC.OCFastMode 	= TIM_OCFAST_DISABLE;
-	sConfigOC.OCIdleState 	= TIM_OCIDLESTATE_RESET;
-	sConfigOC.OCNIdleState	= TIM_OCNIDLESTATE_RESET;
-	if (HAL_TIM_PWM_ConfigChannel(&htim16, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-
-	sBreakDeadTimeConfig.OffStateRunMode 	= TIM_OSSR_DISABLE;
-	sBreakDeadTimeConfig.OffStateIDLEMode 	= TIM_OSSI_DISABLE;
-	sBreakDeadTimeConfig.LockLevel 			= TIM_LOCKLEVEL_OFF;
-	sBreakDeadTimeConfig.DeadTime 			= 0;
-	sBreakDeadTimeConfig.BreakState 		= TIM_BREAK_DISABLE;
-	sBreakDeadTimeConfig.BreakPolarity 		= TIM_BREAKPOLARITY_HIGH;
-	sBreakDeadTimeConfig.AutomaticOutput 	= TIM_AUTOMATICOUTPUT_DISABLE;
-	if (HAL_TIMEx_ConfigBreakDeadTime(&htim16, &sBreakDeadTimeConfig) != HAL_OK) Error_Handler();
-
-	HAL_TIM_MspPostInit(&htim16);
-}
-
-/**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void) {
-	huart1.Instance 					= USART1;
-	huart1.Init.BaudRate 				= 115200;
-	huart1.Init.WordLength 				= UART_WORDLENGTH_8B;
-	huart1.Init.StopBits 				= UART_STOPBITS_1;
-	huart1.Init.Parity 					= UART_PARITY_NONE;
-	huart1.Init.Mode 					= UART_MODE_TX_RX;
-	huart1.Init.HwFlowCtl 				= UART_HWCONTROL_NONE;
-	huart1.Init.OverSampling 			= UART_OVERSAMPLING_16;
-	huart1.Init.OneBitSampling 			= UART_ONE_BIT_SAMPLE_DISABLE;
-	huart1.AdvancedInit.AdvFeatureInit 	= UART_ADVFEATURE_NO_INIT;
-	if (HAL_UART_Init(&huart1) != HAL_OK) Error_Handler();
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void) {
-	/* DMA controller clock enable */
-	__HAL_RCC_DMA1_CLK_ENABLE();
-
-	/* DMA interrupt init */
-	/* DMA1_Channel3_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void) {
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-	/* GPIO Ports Clock Enable */
-	__HAL_RCC_GPIOA_CLK_ENABLE();
-	__HAL_RCC_GPIOB_CLK_ENABLE();
-
-	/* Configure GPIO pin Output Level */
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-
-	/* Configure GPIO pin Output Level */
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
-
-	/* Configure GPIO pin : PB11 */
-	GPIO_InitStruct.Pin 	= GPIO_PIN_11;
-	GPIO_InitStruct.Mode 	= GPIO_MODE_OUTPUT_PP;
-	GPIO_InitStruct.Pull 	= GPIO_NOPULL;
-	GPIO_InitStruct.Speed 	= GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-	/* Configure GPIO pin : PA12 */
-	GPIO_InitStruct.Pin 	= GPIO_PIN_12;
-	GPIO_InitStruct.Mode 	= GPIO_MODE_OUTPUT_PP;
-	GPIO_InitStruct.Pull 	= GPIO_NOPULL;
-	GPIO_InitStruct.Speed 	= GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-}
-
-/**
- * @brief  CAN RX FIFO0 message pending callback (interrupt service routine).
- *         Parses incoming CAN frames and sets the LED mode accordingly.
- */
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
-{
-    if (hcan->Instance == CAN1) {
-
-        CAN_RxHeaderTypeDef recieve;
-        uint8_t data[8]; // Now 8-byte buffer
-
-        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &recieve, data) == HAL_OK) {
-
-            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
-
-            // ----- Print ID, DLC, and all data bytes -----
-            char msg[100];
-            int len = snprintf(msg, sizeof(msg),
-                               "ID=0x%03lX DLC=%ld DATA: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-                               recieve.StdId,
-                               recieve.DLC,
-                               data[0], data[1], data[2], data[3],
-                               data[4], data[5], data[6], data[7]);
-
-            HAL_UART_Transmit(&huart1, (uint8_t*) msg, len, HAL_MAX_DELAY);
-
-            // ----- Your original behavior logic -----
-            uint8_t d = data[0]; // Interpret first byte as command
-
-            if (d & 0x01) {
-                rgb = 1;
-                burntOrange = 0;
-                fade = 0;
-            } else if (d & 0x02) {
-                burntOrange = 1;
-                rgb = 0;
-                fade = 0;
-            } else if (d & 0x04) {
-                fade = 1;
-                rgb = 0;
-                burntOrange = 0;
-            } else {
-                rgb = 0;
-                burntOrange = 0;
-                fade = 0;
-            }
-        }
+    if (htim->Instance == TIM16) {
+        HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
     }
 }
 
-/**
-  * @brief  eror
-  */
+/* ============================================================================
+ *  MAIN
+ * ============================================================================ */
+int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_TIM16_Init();
+    MX_CAN1_Init();
+    MX_USART1_UART_Init();
+
+    /* CAN filter - accept only Lighting_Command (0x660) */
+    CAN_FilterTypeDef f = {0};
+    /* For a 32-bit ID-mask filter on standard ID, the StdId goes in bits 15:5
+     * of the high register (left-shifted by 5). */
+    f.FilterIdHigh         = (CAN_ID_LIGHTING_COMMAND << 5);
+    f.FilterIdLow          = 0x0000;
+    f.FilterMaskIdHigh     = (0x7FF << 5);
+    f.FilterMaskIdLow      = 0x0000;
+    f.FilterFIFOAssignment = CAN_RX_FIFO0;
+    f.FilterBank           = 0;
+    f.FilterMode           = CAN_FILTERMODE_IDMASK;
+    f.FilterScale          = CAN_FILTERSCALE_32BIT;
+    f.FilterActivation     = ENABLE;
+    f.SlaveStartFilterBank = 0;
+    HAL_CAN_ConfigFilter(&hcan1, &f);
+
+    HAL_CAN_Start(&hcan1);
+    HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+    HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+
+    last_cmd_tick = HAL_GetTick();
+    uint32_t last_status_tick = HAL_GetTick();
+
+    while (1) {
+        uint32_t now = HAL_GetTick();
+
+        /* Render a frame */
+        render_frame();
+        __HAL_TIM_SET_COUNTER(&htim16, 0);
+        HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, led_pattern, NUM_STEPS);
+
+        /* Send status at STATUS_TX_PERIOD_MS cadence */
+        if ((now - last_status_tick) >= STATUS_TX_PERIOD_MS) {
+            last_status_tick = now;
+            send_status();
+        }
+
+        HAL_Delay(MAIN_LOOP_PERIOD_MS);
+    }
+}
+
+/* ============================================================================
+ *  HAL INIT (copied from main.c - keep in sync if .ioc changes regenerate)
+ * ============================================================================ */
+void SystemClock_Config(void) {
+    RCC_OscInitTypeDef oscC = {0};
+    RCC_ClkInitTypeDef clkC = {0};
+
+    if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) Error_Handler();
+
+    oscC.OscillatorType        = RCC_OSCILLATORTYPE_MSI;
+    oscC.MSIState              = RCC_MSI_ON;
+    oscC.MSICalibrationValue   = 0;
+    oscC.MSIClockRange         = RCC_MSIRANGE_6;
+    oscC.PLL.PLLState          = RCC_PLL_ON;
+    oscC.PLL.PLLSource         = RCC_PLLSOURCE_MSI;
+    oscC.PLL.PLLM              = 1;
+    oscC.PLL.PLLN              = 40;
+    oscC.PLL.PLLP              = RCC_PLLP_DIV7;
+    oscC.PLL.PLLQ              = RCC_PLLQ_DIV2;
+    oscC.PLL.PLLR              = RCC_PLLR_DIV2;
+    if (HAL_RCC_OscConfig(&oscC) != HAL_OK) Error_Handler();
+
+    clkC.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    clkC.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clkC.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+    clkC.APB1CLKDivider = RCC_HCLK_DIV1;
+    clkC.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&clkC, FLASH_LATENCY_4) != HAL_OK) Error_Handler();
+}
+
+static void MX_CAN1_Init(void) {
+    hcan1.Instance                  = CAN1;
+    hcan1.Init.Prescaler            = 20;
+    hcan1.Init.Mode                 = CAN_MODE_NORMAL;
+    hcan1.Init.SyncJumpWidth        = CAN_SJW_1TQ;
+    hcan1.Init.TimeSeg1             = CAN_BS1_13TQ;
+    hcan1.Init.TimeSeg2             = CAN_BS2_2TQ;
+    hcan1.Init.TimeTriggeredMode    = DISABLE;
+    hcan1.Init.AutoBusOff           = ENABLE;
+    hcan1.Init.AutoWakeUp           = ENABLE;
+    hcan1.Init.AutoRetransmission   = ENABLE;
+    hcan1.Init.ReceiveFifoLocked    = DISABLE;
+    hcan1.Init.TransmitFifoPriority = ENABLE;
+    if (HAL_CAN_Init(&hcan1) != HAL_OK) Error_Handler();
+}
+
+static void MX_TIM16_Init(void) {
+    TIM_OC_InitTypeDef oc = {0};
+    TIM_BreakDeadTimeConfigTypeDef bdt = {0};
+
+    htim16.Instance                = TIM16;
+    htim16.Init.Prescaler          = 0;
+    htim16.Init.CounterMode        = TIM_COUNTERMODE_UP;
+    htim16.Init.Period             = 50;
+    htim16.Init.ClockDivision      = TIM_CLOCKDIVISION_DIV1;
+    htim16.Init.RepetitionCounter  = 0;
+    htim16.Init.AutoReloadPreload  = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim16) != HAL_OK) Error_Handler();
+    if (HAL_TIM_PWM_Init(&htim16) != HAL_OK)  Error_Handler();
+
+    oc.OCMode       = TIM_OCMODE_PWM1;
+    oc.Pulse        = 25;
+    oc.OCPolarity   = TIM_OCPOLARITY_HIGH;
+    oc.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
+    oc.OCFastMode   = TIM_OCFAST_DISABLE;
+    oc.OCIdleState  = TIM_OCIDLESTATE_RESET;
+    oc.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+    if (HAL_TIM_PWM_ConfigChannel(&htim16, &oc, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+
+    bdt.OffStateRunMode  = TIM_OSSR_DISABLE;
+    bdt.OffStateIDLEMode = TIM_OSSI_DISABLE;
+    bdt.LockLevel        = TIM_LOCKLEVEL_OFF;
+    bdt.DeadTime         = 0;
+    bdt.BreakState       = TIM_BREAK_DISABLE;
+    bdt.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+    bdt.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
+    if (HAL_TIMEx_ConfigBreakDeadTime(&htim16, &bdt) != HAL_OK) Error_Handler();
+
+    HAL_TIM_MspPostInit(&htim16);
+}
+
+static void MX_USART1_UART_Init(void) {
+    huart1.Instance                    = USART1;
+    huart1.Init.BaudRate               = 115200;
+    huart1.Init.WordLength             = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits               = UART_STOPBITS_1;
+    huart1.Init.Parity                 = UART_PARITY_NONE;
+    huart1.Init.Mode                   = UART_MODE_TX_RX;
+    huart1.Init.HwFlowCtl              = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling           = UART_OVERSAMPLING_16;
+    huart1.Init.OneBitSampling         = UART_ONE_BIT_SAMPLE_DISABLE;
+    huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+    if (HAL_UART_Init(&huart1) != HAL_OK) Error_Handler();
+}
+
+static void MX_DMA_Init(void) {
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
+}
+
+static void MX_GPIO_Init(void) {
+    GPIO_InitTypeDef g = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+
+    g.Pin   = GPIO_PIN_11;
+    g.Mode  = GPIO_MODE_OUTPUT_PP;
+    g.Pull  = GPIO_NOPULL;
+    g.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &g);
+
+    g.Pin = GPIO_PIN_12;
+    HAL_GPIO_Init(GPIOA, &g);
+}
+
 void Error_Handler(void) {
-	__disable_irq();
-	while (1) {}
+    __disable_irq();
+    while (1) {}
 }
 
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line) {
-	/* USER CODE BEGIN 6 */
-	/* User can add his own implementation to report the file name and line number,
-		ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-	/* USER CODE END 6 */
-}
-#endif /* USE_FULL_ASSERT */
+void assert_failed(uint8_t *file, uint32_t line) {}
+#endif
