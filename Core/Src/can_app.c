@@ -58,6 +58,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
         cmd.bps_strobe       = (b >> 5) & 0x01;
         cmd.custom_mode      = (b >> 6) & 0x03;
         last_cmd_tick = HAL_GetTick();
+        /* Track the last time we actually saw the brake asserted, so the render
+         * loop can debounce brief brake-bit dropouts (e.g. CAN frames that
+         * interleave brake and turn commands) instead of starting the brake's
+         * release animation on a single 0. */
+        if (cmd.brake) last_brake_tick = HAL_GetTick();
 
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
     }

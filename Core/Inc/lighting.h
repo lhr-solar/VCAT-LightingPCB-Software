@@ -25,6 +25,7 @@ typedef struct {
 /* Shared application state (defined in lighting.c). */
 extern volatile LightingCommand cmd;
 extern volatile uint32_t        last_cmd_tick;   /* HAL_GetTick() of last command */
+extern volatile uint32_t        last_brake_tick; /* HAL_GetTick() of last frame with brake set */
 extern volatile uint8_t         board_fault;     /* FAULT_* code reported on CAN  */
 
 /* WS2814 DMA buffer (one PWM duty value per colour bit). */

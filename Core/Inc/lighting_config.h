@@ -87,7 +87,14 @@
 /* Loop / comms timing */
 #define COMMAND_WATCHDOG_MS         500      /* blank LEDs if no command within  */
 #define STATUS_TX_PERIOD_MS         100      /* 10 Hz status                     */
-#define MAIN_LOOP_PERIOD_MS         10
+#define MAIN_LOOP_PERIOD_MS         1
+
+/* Treat the brake as still held for this long after the last frame that had the
+ * brake bit set. Bridges brief dropouts (e.g. a sender that interleaves
+ * brake-only and turn-only CAN frames) so the brake doesn't flicker into its
+ * release animation on a single brake==0 frame. Keep well under
+ * COMMAND_WATCHDOG_MS; larger = more glitch tolerance but more release lag. */
+#define BRAKE_RELEASE_DEBOUNCE_MS   150
 
 /* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
 #define FAULT_OK                    0

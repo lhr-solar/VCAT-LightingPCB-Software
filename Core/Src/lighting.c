@@ -15,6 +15,7 @@
  * ============================================================================ */
 volatile LightingCommand cmd           = {0};
 volatile uint32_t        last_cmd_tick = 0;
+volatile uint32_t        last_brake_tick = 0;
 volatile uint8_t         board_fault   = FAULT_OK;
 
 /* WS2814 DMA buffer (one PWM duty value per bit). */
@@ -187,15 +188,18 @@ static int turn_step(int active) {
 
 /* ============================================================================
  *  BRAKE LIGHT
- *  Red bar that grows outward from the centre of the strip to both ends while
- *  the brake is applied, holds solid for as long as commands keep arriving, then
- *  contracts back to the centre (out-fill) once the brake request drops or CAN
- *  commands stop. Lifecycle is driven by render_frame via a single "active"
- *  request flag, mirroring the turn indicator's in/hold/out behaviour.
+ *  Red bar that grows outward to both ends while the brake is applied, holds
+ *  solid for as long as commands keep arriving, then contracts back once the
+ *  brake request drops or CAN commands stop. On the rear board the bar lights
+ *  the exact same region as the turn indicators (see the shared indicator
+ *  geometry below): it grows from two inner edges out to the ends, leaving a
+ *  dark centre. Other boards grow from the exact centre to both ends. Lifecycle is driven by render_frame
+ *  via a single "active" request flag, mirroring the turn indicator's
+ *  in/hold/out behaviour.
  * ============================================================================ */
 
 /* Duration of each one-LED-per-side expansion step, in main-loop frames. */
-#define BRAKE_FRAMES_PER_STEP   (20 / MAIN_LOOP_PERIOD_MS)
+#define BRAKE_FRAMES_PER_STEP   (10 / MAIN_LOOP_PERIOD_MS)
 
 /* The brake bar grows from the PHYSICAL centre of the strip out to both ends.
  * Many light bars are a single strip folded back on itself (so the data/return
@@ -221,12 +225,48 @@ static int turn_step(int active) {
   static inline int brake_phys_pos(int led) { return led; }
 #endif
 
-/* Physical-centre slot and the radius needed to reach the farther end. */
+/* Physical-centre slot. */
 #define BRAKE_CENTER_POS   ((BRAKE_SPAN - 1) / 2)
+
+/* ----- Shared indicator geometry --------------------------------------------
+ * The rear turn indicators and the rear brake bar light the exact same region,
+ * so both derive from one source of truth: TURN_SEGMENTS_PER_SIDE lit segments
+ * per side, anchored at each side's far end and growing inward toward a dark
+ * centre. The dark middle is whatever's left over (BRAKE_SPAN - 2*N slots), so
+ * with equal sides the pattern stays centred. */
+#ifndef TURN_SEGMENTS_PER_SIDE
+#define TURN_SEGMENTS_PER_SIDE 7
+#endif
+
+/* Low half lit slots [0 .. TURN_BASE_LOW]; high half lit slots
+ * [TURN_HIGH_INNER .. BRAKE_SPAN-1]. The strip's first LED (index 0, blanked by
+ * FIRST_ACTIVE) sits at the low half's far end, so that half is physically one
+ * segment short; the high half drops its innermost slot (TURN_HIGH_INNER) to
+ * match, so both sides show the same number of lit segments. */
+#define TURN_BASE_LOW    (TURN_SEGMENTS_PER_SIDE - 1)
+#define TURN_BASE_HIGH   (BRAKE_SPAN - TURN_SEGMENTS_PER_SIDE)
+#define TURN_HIGH_INNER  (TURN_BASE_HIGH + 1)
+
+/* Slots each turn half animates over (kept equal so both sweep in lockstep). */
+#define TURN_LOW_MAX     (TURN_SEGMENTS_PER_SIDE)
+#define TURN_HIGH_MAX    (TURN_SEGMENTS_PER_SIDE)
+
+/* Brake bar inner edges. On the rear board they match the turn indicators
+ * exactly (same lit region); every other board has no rear-style indicator, so
+ * the brake keeps its original grow-from-the-exact-centre-to-both-ends look. */
+#if BOARD_ID == BOARD_REAR
+  #define BRAKE_BASE_LOW   TURN_BASE_LOW
+  #define BRAKE_BASE_HIGH  TURN_HIGH_INNER
+#else
+  #define BRAKE_BASE_LOW   BRAKE_CENTER_POS
+  #define BRAKE_BASE_HIGH  BRAKE_CENTER_POS
+#endif
+
+/* Radius needed for the farther side to reach its end. */
 #define BRAKE_MAX_RADIUS \
-    (((BRAKE_SPAN - 1 - BRAKE_CENTER_POS) > BRAKE_CENTER_POS) \
-        ? (BRAKE_SPAN - 1 - BRAKE_CENTER_POS) \
-        : BRAKE_CENTER_POS)
+    (((BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) > BRAKE_BASE_LOW) \
+        ? (BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) \
+        : BRAKE_BASE_LOW)
 
 enum { BR_IDLE, BR_FILLING, BR_HOLD, BR_EMPTYING };
 
@@ -243,11 +283,15 @@ static int brake_frame  = 0;   /* frame counter within the current step */
 static int brake_step(int active) {
     const uint32_t color = pack_rgbw(255, 0, 0, 0);
 
-    /* Animations off: solid red while applied, off the instant it drops. */
+    /* Animations off: solid red while applied (centre gap stays dark), off the
+     * instant it drops. */
     if (ANIMATION_MODE == ANIM_OFF) {
         if (!active) { brake_state = BR_IDLE; return 0; }
         for (int led = 0; led < TOTAL_LEDS; led++) {
-            set_led(led, (led < FIRST_ACTIVE) ? 0 : color);
+            int p = brake_phys_pos(led);
+            int lit = (led >= FIRST_ACTIVE) &&
+                      (p <= BRAKE_BASE_LOW || p >= BRAKE_BASE_HIGH);
+            set_led(led, lit ? color : 0);
         }
         return 1;
     }
@@ -283,16 +327,22 @@ static int brake_step(int active) {
             break;
     }
 
-    int lo = BRAKE_CENTER_POS - brake_radius;
-    int hi = BRAKE_CENTER_POS + brake_radius;
+    int lo = BRAKE_BASE_LOW  - brake_radius;   /* low front grows down toward slot 0   */
+    int hi = BRAKE_BASE_HIGH + brake_radius;   /* high front grows up toward the far end */
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
-        uint32_t led_color;
+        uint32_t led_color = 0;
         int p = brake_phys_pos(led);
-        if      (led < FIRST_ACTIVE)     led_color = 0;
-        else if (brake_state == BR_HOLD) led_color = color;
-        else if (p >= lo && p <= hi)     led_color = color;   /* filling / emptying */
-        else                             led_color = 0;
+        if (led < FIRST_ACTIVE) {
+            led_color = 0;
+        } else if (brake_state == BR_HOLD) {
+            /* Solid, but the centre gap stays dark. */
+            if (p <= BRAKE_BASE_LOW || p >= BRAKE_BASE_HIGH) led_color = color;
+        } else {
+            /* Filling / emptying: two fronts expanding outward from the gap. */
+            if (p <= BRAKE_BASE_LOW  && p >= lo) led_color = color;
+            if (p >= BRAKE_BASE_HIGH && p <= hi) led_color = color;
+        }
         set_led(led, led_color);
     }
     return 1;
@@ -304,11 +354,12 @@ static int brake_step(int active) {
  *  On the rear bar the indicators fill amber from the physical centre outward,
  *  like the brake light, but each side only lights its own half and keeps
  *  looping the blink animation (fill out -> hold -> empty out -> hold) while
- *  active, finishing the current cycle out when commands stop:
+ *  active, finishing the current cycle out when commands stop: 
  *    - left  indicator  -> the "low"  half (centre -> physical slot 0),
  *    - right indicator  -> the "high" half (centre -> far end),
  *    - both (hazards)   -> both halves.
- *  A configurable gap (TURN_CENTER_GAP) is left dark around the exact centre.
+ *  Each side lights TURN_SEGMENTS_PER_SIDE segments anchored at its far end;
+ *  the slots left over in the middle stay dark.
  *  Reuses the brake's folded-strip mapping (brake_phys_pos / BRAKE_CENTER_POS).
  * ============================================================================ */
 
@@ -317,19 +368,9 @@ static int brake_step(int active) {
 #define REAR_TURN_SWAP_SIDES 0
 #endif
 
-/* Empty gap (in physical slots) left dark on each side of the exact centre, so
- * the two halves are visually spaced apart instead of meeting in the middle. */
-#ifndef TURN_CENTER_GAP
-#define TURN_CENTER_GAP 2
-#endif
-
-/* Innermost lit slot of each half (just outside the centre gap). */
-#define TURN_BASE_LOW   (BRAKE_CENTER_POS - TURN_CENTER_GAP)
-#define TURN_BASE_HIGH  (BRAKE_CENTER_POS + TURN_CENTER_GAP)
-
-/* Number of slots each half spans from its inner base out to its far end. */
-#define TURN_LOW_MAX    (TURN_BASE_LOW + 1)
-#define TURN_HIGH_MAX   (BRAKE_SPAN - TURN_BASE_HIGH)
+/* Turn geometry (TURN_SEGMENTS_PER_SIDE, TURN_BASE_LOW/HIGH, TURN_HIGH_INNER,
+ * TURN_LOW_MAX/HIGH_MAX) is defined once in the shared indicator-geometry block
+ * above so the brake bar and these indicators stay the exact same size. */
 
 enum { TR_IDLE, TR_FILLING, TR_HOLD_FULL, TR_EMPTYING, TR_HOLD_EMPTY };
 
@@ -345,7 +386,7 @@ static turn_side_t turn_high = { TR_IDLE, 0, 0, 0 };
  *        `span` is the number of slots this half covers from its inner base.
  */
 static int turn_side_advance(turn_side_t *s, int active, int span) {
-    #define TURN_FRAMES_PER_STEP (40 / MAIN_LOOP_PERIOD_MS)
+    #define TURN_FRAMES_PER_STEP (20 / MAIN_LOOP_PERIOD_MS)
     #define TURN_HOLD_FRAMES_R   (80 / MAIN_LOOP_PERIOD_MS)
     s->frame++;
     switch (s->state) {
@@ -394,25 +435,28 @@ static int turn_side_lit(const turn_side_t *s, int d) {
 }
 
 /**
- * @brief Render the rear turn indicators. Returns 1 if either half owns the
- *        frame this tick, 0 once both halves are fully idle.
+ * @brief Overlay the rear turn indicators (amber) on top of whatever is already
+ *        in the frame (e.g. the brake layer). Only paints its lit slots, so the
+ *        underlying pattern shows through everywhere else and between blinks.
+ *        Returns 1 if either half owns the frame this tick, 0 once both halves
+ *        are fully idle.
  */
 static int turn_render(int left_active, int right_active) {
-    const uint32_t color = pack_rgbw(255, 100, 0, 0);
+    const uint32_t color = pack_rgbw(255, 64, 0, 0);
 
     int low_active  = REAR_TURN_SWAP_SIDES ? right_active : left_active;
     int high_active = REAR_TURN_SWAP_SIDES ? left_active  : right_active;
 
-    /* Animations off: light the requested half/halves solid (with the centre
-     * gap still dark), off otherwise. */
+    /* Animations off: light the requested half/halves solid (centre stays
+     * dark), nothing otherwise. */
     if (ANIMATION_MODE == ANIM_OFF) {
         if (!low_active && !high_active) { turn_low.state = TR_IDLE; turn_high.state = TR_IDLE; return 0; }
         for (int led = 0; led < TOTAL_LEDS; led++) {
-            if (led < FIRST_ACTIVE) { set_led(led, 0); continue; }
+            if (led < FIRST_ACTIVE) continue;
             int p = brake_phys_pos(led);
             int lit = (low_active  && p <= TURN_BASE_LOW) ||
-                      (high_active && p >= TURN_BASE_HIGH);
-            set_led(led, lit ? color : 0);
+                      (high_active && p >= TURN_HIGH_INNER);
+            if (lit) set_led(led, color);   /* overlay: paint lit slots only */
         }
         return 1;
     }
@@ -422,13 +466,11 @@ static int turn_render(int left_active, int right_active) {
     if (!owns_lo && !owns_hi) return 0;
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
-        uint32_t c = 0;
-        if (led >= FIRST_ACTIVE) {
-            int p = brake_phys_pos(led);
-            if (owns_lo && p <= TURN_BASE_LOW  && turn_side_lit(&turn_low,  TURN_BASE_LOW - p)) c = color;
-            if (owns_hi && p >= TURN_BASE_HIGH && turn_side_lit(&turn_high, p - TURN_BASE_HIGH)) c = color;
-        }
-        set_led(led, c);
+        if (led < FIRST_ACTIVE) continue;
+        int p = brake_phys_pos(led);
+        int lit = (owns_lo && p <= TURN_BASE_LOW  && turn_side_lit(&turn_low,  TURN_BASE_LOW - p)) ||
+                  (owns_hi && p >= TURN_HIGH_INNER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH));
+        if (lit) set_led(led, color);   /* overlay on top of the brake layer */
     }
     return 1;
 }
@@ -475,7 +517,9 @@ void render_frame(void) {
     /* A request is only "held" while commands are actually arriving. When they
      * stop (watchdog) the request drops, which lets each animated effect play
      * its out-animation to completion rather than snapping off. */
-    int brake_req = (!watchdog) && cmd.brake;
+    int brake_held = (last_brake_tick != 0) &&
+                     ((HAL_GetTick() - last_brake_tick) <= BRAKE_RELEASE_DEBOUNCE_MS);
+    int brake_req  = (!watchdog) && (cmd.brake || brake_held);
 #if BOARD_ID == BOARD_REAR
     int left_active  = (!watchdog) && RESPONDS_TO_LEFT  && cmd.left_indicator;
     int right_active = (!watchdog) && RESPONDS_TO_RIGHT && cmd.right_indicator;
@@ -485,14 +529,23 @@ void render_frame(void) {
          (RESPONDS_TO_RIGHT && cmd.right_indicator));
 #endif
 
-    /* Priority: brake > turn > strobe > headlight > custom > off.
+    /* Priority / layering: strobe > headlight > custom > off for steady states.
      * brake_step()/turn handlers are advanced every tick so their out-animations
-     * keep running even after the request drops; whichever owns the strip
-     * (returns non-zero) wins, highest priority first. */
-    if (brake_step(brake_req)) { commit_frame(255); return; }
+     * keep running even after the request drops. */
 #if BOARD_ID == BOARD_REAR
-    if (turn_render(left_active, right_active)) { commit_frame(255); return; }
+    /* Rear: brake (red) is the base layer and the turn indicators (amber)
+     * overlay on top, so braking and turning can show simultaneously - the turn
+     * blinks amber over its segments while the red brake shows between blinks
+     * and on the non-turning side. Both state machines advance every tick.
+     * brake_step() paints the whole strip when it owns the frame; if it doesn't,
+     * clear to black first so the turn overlay sits on nothing. */
+    int brake_owns = brake_step(brake_req);
+    if (!brake_owns) pattern_off();
+    int turn_owns  = turn_render(left_active, right_active);
+    if (brake_owns || turn_owns) { commit_frame(255); return; }
 #else
+    /* Other boards: simple priority, brake > turn, whichever owns wins. */
+    if (brake_step(brake_req)) { commit_frame(255); return; }
     if (turn_step(turn_req))   { commit_frame(255); return; }
 #endif
 
