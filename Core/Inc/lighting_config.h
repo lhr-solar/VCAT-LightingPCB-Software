@@ -40,26 +40,20 @@
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             0
-    #define HEADLIGHT_G             0
-    #define HEADLIGHT_B             0
     #define HEADLIGHT_W             255
-    #define MATTHEW_NUM_QUAD_CHIPS      8
+    #define MATTHEW_NUM_QUAD_CHIPS      9
 #elif BOARD_ID == BOARD_LEFT
     #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       0
     #define HEADLIGHT_R             0
-    #define HEADLIGHT_G             0
-    #define HEADLIGHT_B             0
     #define HEADLIGHT_W             0       /* side panel - no headlight by default */
-    #define MATTHEW_NUM_QUAD_CHIPS      8
+    #define MATTHEW_NUM_QUAD_CHIPS      3
 #elif BOARD_ID == BOARD_REAR
     #define MY_STATUS_ID            CAN_ID_STATUS_REAR
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             64     /* rear "headlight" = tail light, red */
-    #define HEADLIGHT_G             0
-    #define HEADLIGHT_B             0
     #define HEADLIGHT_W             0
     #define MATTHEW_NUM_QUAD_CHIPS      11
 #elif BOARD_ID == BOARD_RIGHT
@@ -67,17 +61,13 @@
     #define RESPONDS_TO_LEFT        0
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             0
-    #define HEADLIGHT_G             0
-    #define HEADLIGHT_B             0
     #define HEADLIGHT_W             0
-    #define MATTHEW_NUM_QUAD_CHIPS      8
+    #define MATTHEW_NUM_QUAD_CHIPS      3
 #elif BOARD_ID == BOARD_CANOPY
     #define MY_STATUS_ID            CAN_ID_STATUS_CANOPY
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             0
-    #define HEADLIGHT_G             0
-    #define HEADLIGHT_B             0
     #define HEADLIGHT_W             255
     #define MATTHEW_NUM_QUAD_CHIPS      8
 #else

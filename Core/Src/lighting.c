@@ -90,7 +90,7 @@ static void pattern_off(void) {
  * @brief Solid headlight colour for this board.
  */
 static void pattern_headlight(void) {
-    uint32_t c = pack_rgbw(HEADLIGHT_R, HEADLIGHT_G, HEADLIGHT_B, HEADLIGHT_W);
+    uint32_t c = pack_rgbw(HEADLIGHT_R, 0, 0, HEADLIGHT_W);
     for (int led = 0; led < TOTAL_LEDS; led++) {
         set_led(led, (led < FIRST_ACTIVE) ? 0 : c);
     }
@@ -106,6 +106,15 @@ static void pattern_headlight(void) {
   #define SPLIT_TURN_INDICATOR 1
 #else
   #define SPLIT_TURN_INDICATOR 0
+#endif
+
+/* Boards that have a brake light. The front overlays turn on the headlight and
+ * the side panels (left/right) are turn-indicator-only, so neither compiles the
+ * brake engine. */
+#if (BOARD_ID == BOARD_REAR) || (BOARD_ID == BOARD_CANOPY)
+  #define USE_BRAKE 1
+#else
+  #define USE_BRAKE 0
 #endif
 
 #if !SPLIT_TURN_INDICATOR
@@ -131,7 +140,7 @@ static int turn_frame      = 0;
 static int turn_step(int active) {
     #define ACTIVE_LEDS         (TOTAL_LEDS - FIRST_ACTIVE)
     #define TURN_FRAMES_PER_LED (20 / MAIN_LOOP_PERIOD_MS)
-    #define TURN_HOLD_FRAMES    (60 / MAIN_LOOP_PERIOD_MS)
+    #define TURN_HOLD_FRAMES    (80 / MAIN_LOOP_PERIOD_MS)
 
     /* Amber: R=255, G=100, B=0, W=0 */
     const uint32_t color = pack_rgbw(255, 100, 0, 0);
@@ -287,9 +296,8 @@ static int turn_step(int active) {
         ? (BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) \
         : BRAKE_BASE_LOW)
 
-/* The front board has no brake light (it overlays turn on the headlight), so
- * the brake engine is only compiled for boards that actually use it. */
-#if BOARD_ID != BOARD_FRONT
+/* Only boards with a brake light (rear, canopy) compile the brake engine. */
+#if USE_BRAKE
 enum { BR_IDLE, BR_FILLING, BR_HOLD, BR_EMPTYING };
 
 static int brake_state  = BR_IDLE;
@@ -369,7 +377,7 @@ static int brake_step(int active) {
     }
     return 1;
 }
-#endif /* BOARD_ID != BOARD_FRONT : brake engine */
+#endif /* USE_BRAKE : brake engine */
 
 #if SPLIT_TURN_INDICATOR
 /* ============================================================================
@@ -540,11 +548,11 @@ void render_frame(void) {
     /* A request is only "held" while commands are actually arriving. When they
      * stop (watchdog) the request drops, which lets each animated effect play
      * its out-animation to completion rather than snapping off. */
-#if BOARD_ID != BOARD_FRONT
+#if USE_BRAKE
     int brake_held = (last_brake_tick != 0) &&
                      ((HAL_GetTick() - last_brake_tick) <= BRAKE_RELEASE_DEBOUNCE_MS);
     int brake_req  = (!watchdog) && (cmd.brake || brake_held);
-#else
+#elif BOARD_ID == BOARD_FRONT
     /* Headlight base layer is debounced like the brake so interleaved
      * headlight/turn frames don't blank it for a tick. */
     int headlight_held = (last_headlight_tick != 0) &&
@@ -590,8 +598,18 @@ void render_frame(void) {
     turn_render(left_active, right_active);   /* overlay amber on top */
     commit_frame(255);
     return;
+#elif (BOARD_ID == BOARD_LEFT) || (BOARD_ID == BOARD_RIGHT)
+    /* Side panels: turn indicator, plus the BPS safety strobe when not turning.
+     * No brake, headlight or custom modes. turn_step() paints the whole strip
+     * while active and follows its out-animation; otherwise show the strobe if
+     * requested, else blank. */
+    if (turn_step(turn_req)) { commit_frame(255); return; }
+    if (!watchdog && cmd.bps_strobe) pattern_bps_strobe();
+    else                             pattern_off();
+    commit_frame(255);
+    return;
 #else
-    /* Other boards: simple priority, brake > turn, whichever owns wins. */
+    /* Canopy: simple priority, brake > turn, whichever owns wins. */
     if (brake_step(brake_req)) { commit_frame(255); return; }
     if (turn_step(turn_req))   { commit_frame(255); return; }
 #endif
