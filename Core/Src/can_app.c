@@ -62,7 +62,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
          * loop can debounce brief brake-bit dropouts (e.g. CAN frames that
          * interleave brake and turn commands) instead of starting the brake's
          * release animation on a single 0. */
-        if (cmd.brake) last_brake_tick = HAL_GetTick();
+        if (cmd.brake)      last_brake_tick     = HAL_GetTick();
+        /* Same idea for the headlight base layer (front board overlays turn on
+         * the headlight; interleaved frames must not blank it for a tick). */
+        if (cmd.headlights) last_headlight_tick = HAL_GetTick();
 
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
     }

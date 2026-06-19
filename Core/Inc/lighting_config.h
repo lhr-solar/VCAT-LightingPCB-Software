@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_REAR        /* <-- change per build target */
+  #define BOARD_ID      BOARD_FRONT        /* <-- change per build target */
 #endif
 
 /* CAN IDs */
@@ -95,6 +95,10 @@
  * release animation on a single brake==0 frame. Keep well under
  * COMMAND_WATCHDOG_MS; larger = more glitch tolerance but more release lag. */
 #define BRAKE_RELEASE_DEBOUNCE_MS   150
+
+/* Same debounce for the headlight base layer (front overlays the turn indicator
+ * on the headlight; interleaved headlight/turn frames must not blank it). */
+#define HEADLIGHT_RELEASE_DEBOUNCE_MS   150
 
 /* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
 #define FAULT_OK                    0

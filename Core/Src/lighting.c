@@ -16,6 +16,7 @@
 volatile LightingCommand cmd           = {0};
 volatile uint32_t        last_cmd_tick = 0;
 volatile uint32_t        last_brake_tick = 0;
+volatile uint32_t        last_headlight_tick = 0;
 volatile uint8_t         board_fault   = FAULT_OK;
 
 /* WS2814 DMA buffer (one PWM duty value per bit). */
@@ -95,7 +96,19 @@ static void pattern_headlight(void) {
     }
 }
 
-#if BOARD_ID != BOARD_REAR
+/* Boards that use the split turn indicator (two halves growing out from the
+ * centre with a dark gap), overlaid on a base layer, instead of the simple
+ * full-strip sweep:
+ *   - rear : turn overlaid on the brake light,
+ *   - front: turn overlaid on the headlight.
+ * Everything else (side panels, canopy) uses the original full-strip sweep. */
+#if (BOARD_ID == BOARD_REAR) || (BOARD_ID == BOARD_FRONT)
+  #define SPLIT_TURN_INDICATOR 1
+#else
+  #define SPLIT_TURN_INDICATOR 0
+#endif
+
+#if !SPLIT_TURN_INDICATOR
 /**
  * @brief Turn indicator (amber). Lifecycle driven by render_frame via a single
  *        "active" request flag:
@@ -184,7 +197,7 @@ static int turn_step(int active) {
     }
     return 1;
 }
-#endif /* BOARD_ID != BOARD_REAR : sweep turn indicator */
+#endif /* !SPLIT_TURN_INDICATOR : full-strip sweep turn indicator */
 
 /* ============================================================================
  *  BRAKE LIGHT
@@ -235,7 +248,13 @@ static int turn_step(int active) {
  * centre. The dark middle is whatever's left over (BRAKE_SPAN - 2*N slots), so
  * with equal sides the pattern stays centred. */
 #ifndef TURN_SEGMENTS_PER_SIDE
-#define TURN_SEGMENTS_PER_SIDE 7
+  #if BOARD_ID == BOARD_FRONT
+    /* Front bar is physically shorter (BRAKE_SPAN 16 vs the rear's 22), so its
+     * indicators use fewer segments per side to keep a sensible dark centre. */
+    #define TURN_SEGMENTS_PER_SIDE 6
+  #else
+    #define TURN_SEGMENTS_PER_SIDE 7
+  #endif
 #endif
 
 /* Low half lit slots [0 .. TURN_BASE_LOW]; high half lit slots
@@ -268,6 +287,9 @@ static int turn_step(int active) {
         ? (BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) \
         : BRAKE_BASE_LOW)
 
+/* The front board has no brake light (it overlays turn on the headlight), so
+ * the brake engine is only compiled for boards that actually use it. */
+#if BOARD_ID != BOARD_FRONT
 enum { BR_IDLE, BR_FILLING, BR_HOLD, BR_EMPTYING };
 
 static int brake_state  = BR_IDLE;
@@ -347,12 +369,13 @@ static int brake_step(int active) {
     }
     return 1;
 }
+#endif /* BOARD_ID != BOARD_FRONT : brake engine */
 
-#if BOARD_ID == BOARD_REAR
+#if SPLIT_TURN_INDICATOR
 /* ============================================================================
- *  REAR TURN INDICATOR
- *  On the rear bar the indicators fill amber from the physical centre outward,
- *  like the brake light, but each side only lights its own half and keeps
+ *  SPLIT TURN INDICATOR (rear + front)
+ *  The indicators fill amber from the physical centre outward, like the brake
+ *  bar, but each side only lights its own half and keeps
  *  looping the blink animation (fill out -> hold -> empty out -> hold) while
  *  active, finishing the current cycle out when commands stop: 
  *    - left  indicator  -> the "low"  half (centre -> physical slot 0),
@@ -474,14 +497,14 @@ static int turn_render(int left_active, int right_active) {
     }
     return 1;
 }
-#endif /* BOARD_ID == BOARD_REAR */
+#endif /* SPLIT_TURN_INDICATOR */
 
 /**
  * @brief BPS strobe at 90 pulses/min (1.5 Hz), short white flash.
  */
 static void pattern_bps_strobe(void) {
-    #define STROBE_PERIOD_FRAMES    (667 / MAIN_LOOP_PERIOD_MS)
-    #define STROBE_ON_FRAMES        (60  / MAIN_LOOP_PERIOD_MS)
+    #define STROBE_PERIOD_FRAMES    (367 / MAIN_LOOP_PERIOD_MS)
+    #define STROBE_ON_FRAMES        (42  / MAIN_LOOP_PERIOD_MS)
 
     static int frame_count = 0;
     const uint32_t color = pack_rgbw(0, 0, 0, 255);
@@ -517,10 +540,18 @@ void render_frame(void) {
     /* A request is only "held" while commands are actually arriving. When they
      * stop (watchdog) the request drops, which lets each animated effect play
      * its out-animation to completion rather than snapping off. */
+#if BOARD_ID != BOARD_FRONT
     int brake_held = (last_brake_tick != 0) &&
                      ((HAL_GetTick() - last_brake_tick) <= BRAKE_RELEASE_DEBOUNCE_MS);
     int brake_req  = (!watchdog) && (cmd.brake || brake_held);
-#if BOARD_ID == BOARD_REAR
+#else
+    /* Headlight base layer is debounced like the brake so interleaved
+     * headlight/turn frames don't blank it for a tick. */
+    int headlight_held = (last_headlight_tick != 0) &&
+                         ((HAL_GetTick() - last_headlight_tick) <= HEADLIGHT_RELEASE_DEBOUNCE_MS);
+    int headlight_req  = (!watchdog) && (cmd.headlights || headlight_held);
+#endif
+#if SPLIT_TURN_INDICATOR
     int left_active  = (!watchdog) && RESPONDS_TO_LEFT  && cmd.left_indicator;
     int right_active = (!watchdog) && RESPONDS_TO_RIGHT && cmd.right_indicator;
 #else
@@ -543,6 +574,22 @@ void render_frame(void) {
     if (!brake_owns) pattern_off();
     int turn_owns  = turn_render(left_active, right_active);
     if (brake_owns || turn_owns) { commit_frame(255); return; }
+#elif BOARD_ID == BOARD_FRONT
+    /* Front: the steady pattern (headlight / strobe / custom) is the base layer
+     * and the turn indicators (amber) overlay on top, so headlights and turn
+     * signals show simultaneously - the turn blinks amber over its segments
+     * while the headlight shows between blinks and on the non-turning side. */
+    if (!watchdog) {
+        if      (cmd.bps_strobe)        pattern_bps_strobe();
+        else if (headlight_req)         pattern_headlight();
+        else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
+        else                            pattern_off();
+    } else {
+        pattern_off();
+    }
+    turn_render(left_active, right_active);   /* overlay amber on top */
+    commit_frame(255);
+    return;
 #else
     /* Other boards: simple priority, brake > turn, whichever owns wins. */
     if (brake_step(brake_req)) { commit_frame(255); return; }
