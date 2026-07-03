@@ -40,6 +40,8 @@ int main(void) {
             can_status_send();
         }
 
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
+
         HAL_Delay(MAIN_LOOP_PERIOD_MS);
     }
 }

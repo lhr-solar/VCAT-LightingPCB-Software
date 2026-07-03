@@ -164,6 +164,7 @@ static void MX_GPIO_Init(void) {
 
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BPS_STROBE_GPIO_Port, BPS_STROBE_Pin, GPIO_PIN_RESET);
 
     g.Pin   = GPIO_PIN_11;
     g.Mode  = GPIO_MODE_OUTPUT_PP;
@@ -173,6 +174,10 @@ static void MX_GPIO_Init(void) {
 
     g.Pin = GPIO_PIN_12;
     HAL_GPIO_Init(GPIOA, &g);
+
+    /* External BPS strobe light enable (see BPS_STROBE_* in main.h). */
+    g.Pin = BPS_STROBE_Pin;
+    HAL_GPIO_Init(BPS_STROBE_GPIO_Port, &g);
 }
 
 void Error_Handler(void) {

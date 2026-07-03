@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_FRONT        /* <-- change per build target */
+  #define BOARD_ID      BOARD_REAR        /* <-- change per build target */
 #endif
 
 /* CAN IDs */

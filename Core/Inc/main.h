@@ -62,6 +62,15 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
+/* External BPS strobe light: a separate fixture that only needs power, driven
+ * straight from a GPIO. It runs independently of the RGB strip, so the strobe
+ * and the turn/hazard patterns can be active at the same time. Wired to the net
+ * labelled SPI1_MISO in the schematic; PA6 (the other SPI1_MISO option) is the
+ * strip output, so this defaults to PB4. Update the port/pin if the net maps to
+ * a different MCU pin. */
+#define BPS_STROBE_GPIO_Port  GPIOB
+#define BPS_STROBE_Pin        GPIO_PIN_4
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

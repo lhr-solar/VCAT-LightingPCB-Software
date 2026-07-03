@@ -508,24 +508,6 @@ static int turn_render(int left_active, int right_active) {
 #endif /* SPLIT_TURN_INDICATOR */
 
 /**
- * @brief BPS strobe at 90 pulses/min (1.5 Hz), short white flash.
- */
-static void pattern_bps_strobe(void) {
-    #define STROBE_PERIOD_FRAMES    (367 / MAIN_LOOP_PERIOD_MS)
-    #define STROBE_ON_FRAMES        (42  / MAIN_LOOP_PERIOD_MS)
-
-    static int frame_count = 0;
-    const uint32_t color = pack_rgbw(0, 0, 0, 255);
-
-    if (++frame_count >= STROBE_PERIOD_FRAMES) frame_count = 0;
-    int on = (frame_count < STROBE_ON_FRAMES);
-
-    for (int led = 0; led < TOTAL_LEDS; led++) {
-        set_led(led, (led < FIRST_ACTIVE) ? 0 : (on ? color : 0));
-    }
-}
-
-/**
  * @brief Custom modes (1=rgb rainbow, 2=burnt orange, 3=palette fade, 0=off).
  *        TODO: port the existing matthews_pattner / smooth_palette logic here.
  *        For now just shows headlight colour for any non-zero mode.
@@ -544,6 +526,12 @@ static void pattern_custom_mode(uint8_t mode) {
 void render_frame(void) {
     int watchdog = (HAL_GetTick() - last_cmd_tick) > COMMAND_WATCHDOG_MS;
     board_fault  = watchdog ? FAULT_LIGHT_CMD_WATCHDOG : FAULT_OK;
+
+    /* The BPS strobe is a separate external light - just drive its GPIO high
+     * while commanded. It is independent of the RGB strip, so the strobe and the
+     * turn/hazard/brake patterns can all be active at the same time. */
+    HAL_GPIO_WritePin(BPS_STROBE_GPIO_Port, BPS_STROBE_Pin,
+                      (!watchdog && cmd.bps_strobe) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
     /* A request is only "held" while commands are actually arriving. When they
      * stop (watchdog) the request drops, which lets each animated effect play
@@ -588,8 +576,7 @@ void render_frame(void) {
      * signals show simultaneously - the turn blinks amber over its segments
      * while the headlight shows between blinks and on the non-turning side. */
     if (!watchdog) {
-        if      (cmd.bps_strobe)        pattern_bps_strobe();
-        else if (headlight_req)         pattern_headlight();
+        if      (headlight_req)         pattern_headlight();
         else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
         else                            pattern_off();
     } else {
@@ -599,13 +586,11 @@ void render_frame(void) {
     commit_frame(255);
     return;
 #elif (BOARD_ID == BOARD_LEFT) || (BOARD_ID == BOARD_RIGHT)
-    /* Side panels: turn indicator, plus the BPS safety strobe when not turning.
-     * No brake, headlight or custom modes. turn_step() paints the whole strip
-     * while active and follows its out-animation; otherwise show the strobe if
-     * requested, else blank. */
-    if (turn_step(turn_req)) { commit_frame(255); return; }
-    if (!watchdog && cmd.bps_strobe) pattern_bps_strobe();
-    else                             pattern_off();
+    /* Side panels: turn indicator only on the strip. The BPS strobe is a
+     * separate external light driven by its own GPIO above, not the strip.
+     * turn_step() paints the whole strip while active and follows its
+     * out-animation; when idle it draws nothing, so blank the strip. */
+    if (!turn_step(turn_req)) pattern_off();
     commit_frame(255);
     return;
 #else
@@ -616,8 +601,7 @@ void render_frame(void) {
 
     /* Steady patterns have no out-animation: shown only while receiving. */
     if (!watchdog) {
-        if      (cmd.bps_strobe)        pattern_bps_strobe();
-        else if (cmd.headlights)        pattern_headlight();
+        if      (cmd.headlights)        pattern_headlight();
         else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
         else                            pattern_off();
     } else {
