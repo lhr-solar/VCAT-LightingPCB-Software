@@ -505,6 +505,24 @@ static int turn_render(int left_active, int right_active) {
     }
     return 1;
 }
+
+#if BOARD_ID == BOARD_FRONT
+/**
+ * @brief Front headlight base layer. Regs don't allow the middle section lit,
+ *        so instead of the full strip this lights only the two end segments -
+ *        the exact same slots the turn indicators occupy - leaving the centre
+ *        gap dark, whether or not an indicator is active.
+ */
+static void pattern_headlight_front(void) {
+    const uint32_t color = pack_rgbw(HEADLIGHT_R, 0, 0, HEADLIGHT_W);
+    for (int led = 0; led < TOTAL_LEDS; led++) {
+        int p = brake_phys_pos(led);
+        int lit = (led >= FIRST_ACTIVE) &&
+                  (p <= TURN_BASE_LOW || p >= TURN_HIGH_INNER);
+        set_led(led, lit ? color : 0);
+    }
+}
+#endif
 #endif /* SPLIT_TURN_INDICATOR */
 
 /**
@@ -576,7 +594,7 @@ void render_frame(void) {
      * signals show simultaneously - the turn blinks amber over its segments
      * while the headlight shows between blinks and on the non-turning side. */
     if (!watchdog) {
-        if      (headlight_req)         pattern_headlight();
+        if      (headlight_req)         pattern_headlight_front();
         else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
         else                            pattern_off();
     } else {
