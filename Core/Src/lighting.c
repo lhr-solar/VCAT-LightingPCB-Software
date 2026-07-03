@@ -597,8 +597,22 @@ void render_frame(void) {
      * and the turn indicators (amber) overlay on top, so headlights and turn
      * signals show simultaneously - the turn blinks amber over its segments
      * while the headlight shows between blinks and on the non-turning side. */
+    /* Dim the headlight while the turn indicator is actually animating. Keyed
+     * off the split-turn state machines (non-idle) rather than the raw command
+     * bits, so it stays stable for the whole blink lifecycle and doesn't flip
+     * dim<->full when the sender interleaves headlight-only and headlight+turn
+     * frames. In ANIM_OFF there's no state machine, so fall back to the request. */
+    int turn_running = (turn_low.state != TR_IDLE) || (turn_high.state != TR_IDLE) ||
+                       ((ANIMATION_MODE == ANIM_OFF) && (left_active || right_active));
+    /* Linger the dim briefly after the animation stops so the base layer doesn't
+     * blip back to full right as the amber clears its last frame. */
+    static uint32_t last_turn_dim_tick = 0;
+    if (turn_running) last_turn_dim_tick = HAL_GetTick();
+    int turn_dim = turn_running ||
+                   ((last_turn_dim_tick != 0) &&
+                    ((HAL_GetTick() - last_turn_dim_tick) <= HEADLIGHT_TURN_DIM_LINGER_MS));
     if (!watchdog) {
-        if      (headlight_req)         pattern_headlight_front(left_active || right_active);
+        if      (headlight_req)         pattern_headlight_front(turn_dim);
         else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
         else                            pattern_off();
     } else {

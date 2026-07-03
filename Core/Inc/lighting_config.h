@@ -43,7 +43,7 @@
     #define HEADLIGHT_W             255
     /* While a turn indicator is blinking, the headlight underneath dims to this
      * white level (0-255) so the amber sweep stands out. */
-    #define HEADLIGHT_TURN_DIM_W    128
+    #define HEADLIGHT_TURN_DIM_W    64
     #define MATTHEW_NUM_QUAD_CHIPS      9
 #elif BOARD_ID == BOARD_LEFT
     #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
@@ -92,6 +92,11 @@
 /* Same debounce for the headlight base layer (front overlays the turn indicator
  * on the headlight; interleaved headlight/turn frames must not blank it). */
 #define HEADLIGHT_RELEASE_DEBOUNCE_MS   150
+
+/* Keep the front headlight dimmed for this long after the turn indicator stops
+ * animating, so the base layer doesn't blip back to full brightness right as the
+ * amber finishes its last frame. */
+#define HEADLIGHT_TURN_DIM_LINGER_MS    100
 
 /* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
 #define FAULT_OK                    0
