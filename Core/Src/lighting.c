@@ -512,9 +512,13 @@ static int turn_render(int left_active, int right_active) {
  *        so instead of the full strip this lights only the two end segments -
  *        the exact same slots the turn indicators occupy - leaving the centre
  *        gap dark, whether or not an indicator is active.
+ *
+ *        `turn_active` dims the white channel (to HEADLIGHT_TURN_DIM_W) while a
+ *        turn indicator is blinking so the amber overlay stands out.
  */
-static void pattern_headlight_front(void) {
-    const uint32_t color = pack_rgbw(HEADLIGHT_R, 0, 0, HEADLIGHT_W);
+static void pattern_headlight_front(int turn_active) {
+    uint8_t w = turn_active ? HEADLIGHT_TURN_DIM_W : HEADLIGHT_W;
+    const uint32_t color = pack_rgbw(HEADLIGHT_R, 0, 0, w);
     for (int led = 0; led < TOTAL_LEDS; led++) {
         int p = brake_phys_pos(led);
         int lit = (led >= FIRST_ACTIVE) &&
@@ -594,7 +598,7 @@ void render_frame(void) {
      * signals show simultaneously - the turn blinks amber over its segments
      * while the headlight shows between blinks and on the non-turning side. */
     if (!watchdog) {
-        if      (headlight_req)         pattern_headlight_front();
+        if      (headlight_req)         pattern_headlight_front(left_active || right_active);
         else if (cmd.custom_mode != 0)  pattern_custom_mode(cmd.custom_mode);
         else                            pattern_off();
     } else {
