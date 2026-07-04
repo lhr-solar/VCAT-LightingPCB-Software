@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_FRONT        /* <-- change per build target */
+  #define BOARD_ID      BOARD_REAR        /* <-- change per build target */
 #endif
 
 /* CAN IDs */
@@ -97,6 +97,12 @@
  * animating, so the base layer doesn't blip back to full brightness right as the
  * amber finishes its last frame. */
 #define HEADLIGHT_TURN_DIM_LINGER_MS    100
+
+/* Treat a turn indicator as still requested for this long after the last frame
+ * that had its bit set. Bridges brief dropouts from senders that interleave
+ * turn and brake/headlight frames so the split indicator doesn't spuriously go
+ * idle (and flash the brake/headlight base) between blinks. */
+#define TURN_RELEASE_DEBOUNCE_MS        150
 
 /* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
 #define FAULT_OK                    0

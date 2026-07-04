@@ -66,6 +66,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
         /* Same idea for the headlight base layer (front board overlays turn on
          * the headlight; interleaved frames must not blank it for a tick). */
         if (cmd.headlights) last_headlight_tick = HAL_GetTick();
+        /* Same idea for the turn indicators: bridge interleaved turn/brake or
+         * turn/headlight frames so the split indicator doesn't blip idle. */
+        if (cmd.left_indicator)  last_left_tick  = HAL_GetTick();
+        if (cmd.right_indicator) last_right_tick = HAL_GetTick();
 
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
     }

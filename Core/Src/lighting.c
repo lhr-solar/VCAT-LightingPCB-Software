@@ -17,6 +17,8 @@ volatile LightingCommand cmd           = {0};
 volatile uint32_t        last_cmd_tick = 0;
 volatile uint32_t        last_brake_tick = 0;
 volatile uint32_t        last_headlight_tick = 0;
+volatile uint32_t        last_left_tick  = 0;
+volatile uint32_t        last_right_tick = 0;
 volatile uint8_t         board_fault   = FAULT_OK;
 
 /* WS2814 DMA buffer (one PWM duty value per bit). */
@@ -416,32 +418,55 @@ static turn_side_t turn_high = { TR_IDLE, 0, 0, 0 };
  *        current cycle out to empty, then goes idle. Returns 1 while non-idle.
  *        `span` is the number of slots this half covers from its inner base.
  */
-static int turn_side_advance(turn_side_t *s, int active, int span) {
+static int turn_side_advance(turn_side_t *s, int active, int span, int end_full) {
     #define TURN_FRAMES_PER_STEP (20 / MAIN_LOOP_PERIOD_MS)
     #define TURN_HOLD_FRAMES_R   (80 / MAIN_LOOP_PERIOD_MS)
     s->frame++;
     switch (s->state) {
         case TR_IDLE:
-            if (active) { s->state = TR_FILLING; s->fill_pos = 0; s->empty_pos = 0; s->frame = 0; }
-            else        return 0;
+            if (active) {
+                if (end_full) {
+                    /* Braking: the region is already fully red (brake base), so
+                     * start in the closing phase from full - blink by emptying
+                     * out first instead of filling from black (no start blip). */
+                    s->state = TR_EMPTYING; s->fill_pos = span; s->empty_pos = 0; s->frame = 0;
+                } else {
+                    s->state = TR_FILLING;  s->fill_pos = 0;    s->empty_pos = 0; s->frame = 0;
+                }
+            } else {
+                return 0;
+            }
             break;
         case TR_FILLING:
+            /* Always finish filling, even after the request drops, so the last
+             * blink ends fully lit. */
             if (s->frame >= TURN_FRAMES_PER_STEP) {
                 s->frame = 0;
                 if (++s->fill_pos >= span) { s->fill_pos = span; s->state = TR_HOLD_FULL; }
             }
             break;
         case TR_HOLD_FULL:
+            /* end_full (braking): once the request is gone, stop here fully lit
+             * and release the region so the identical red brake base shows
+             * through - no fade-out, no blip. */
+            if (!active && end_full) { s->state = TR_IDLE; return 0; }
             if (s->frame >= TURN_HOLD_FRAMES_R) { s->frame = 0; s->empty_pos = 0; s->state = TR_EMPTYING; }
             break;
         case TR_EMPTYING:
+            /* Caught mid-empty with the request gone while braking: reverse and
+             * fill back up so we still end lit. */
+            if (!active && end_full) { s->state = TR_FILLING; s->fill_pos = 0; s->frame = 0; break; }
             if (s->frame >= TURN_FRAMES_PER_STEP) {
                 s->frame = 0;
                 if (++s->empty_pos >= span) { s->empty_pos = span; s->state = TR_HOLD_EMPTY; }
             }
             break;
         case TR_HOLD_EMPTY:
-            if (s->frame >= TURN_HOLD_FRAMES_R) {
+            /* Request gone during the dark part while braking: fill back on
+             * immediately instead of waiting out the hold or going idle. */
+            if (!active && end_full) {
+                s->frame = 0; s->fill_pos = 0; s->empty_pos = 0; s->state = TR_FILLING;
+            } else if (s->frame >= TURN_HOLD_FRAMES_R) {
                 s->frame = 0;
                 if (active) { s->fill_pos = 0; s->empty_pos = 0; s->state = TR_FILLING; }
                 else        { s->state = TR_IDLE; return 0; }
@@ -472,8 +497,16 @@ static int turn_side_lit(const turn_side_t *s, int d) {
  *        Returns 1 if either half owns the frame this tick, 0 once both halves
  *        are fully idle.
  */
-static int turn_render(int left_active, int right_active) {
+static int turn_render(int left_active, int right_active, int end_full) {
+#if BOARD_ID == BOARD_REAR
+    /* Rear turn is red (not amber): it "owns" its whole side region and blinks
+     * red<->black there, blanking the brake underneath so you get a clean red
+     * blink with black gaps instead of amber-over-red. */
+    const uint32_t color = pack_rgbw(255, 0, 0, 0);
+#else
+    /* Front: amber overlay painted on lit slots only (headlight shows between). */
     const uint32_t color = pack_rgbw(255, 64, 0, 0);
+#endif
 
     int low_active  = REAR_TURN_SWAP_SIDES ? right_active : left_active;
     int high_active = REAR_TURN_SWAP_SIDES ? left_active  : right_active;
@@ -492,16 +525,26 @@ static int turn_render(int left_active, int right_active) {
         return 1;
     }
 
-    int owns_lo = turn_side_advance(&turn_low,  low_active,  TURN_LOW_MAX);
-    int owns_hi = turn_side_advance(&turn_high, high_active, TURN_HIGH_MAX);
+    int owns_lo = turn_side_advance(&turn_low,  low_active,  TURN_LOW_MAX,  end_full);
+    int owns_hi = turn_side_advance(&turn_high, high_active, TURN_HIGH_MAX, end_full);
     if (!owns_lo && !owns_hi) return 0;
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
         if (led < FIRST_ACTIVE) continue;
         int p = brake_phys_pos(led);
+#if BOARD_ID == BOARD_REAR
+        /* While a side is animating it takes over its whole region: red where
+         * the sweep is lit, black otherwise (overrides the brake base). Idle
+         * sides are left untouched so the brake red still shows there. */
+        if      (owns_lo && p <= TURN_BASE_LOW)
+            set_led(led, turn_side_lit(&turn_low,  TURN_BASE_LOW - p) ? color : 0);
+        else if (owns_hi && p >= TURN_HIGH_INNER)
+            set_led(led, turn_side_lit(&turn_high, p - TURN_BASE_HIGH) ? color : 0);
+#else
         int lit = (owns_lo && p <= TURN_BASE_LOW  && turn_side_lit(&turn_low,  TURN_BASE_LOW - p)) ||
                   (owns_hi && p >= TURN_HIGH_INNER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH));
-        if (lit) set_led(led, color);   /* overlay on top of the brake layer */
+        if (lit) set_led(led, color);   /* overlay on top of the base layer */
+#endif
     }
     return 1;
 }
@@ -570,8 +613,14 @@ void render_frame(void) {
     int headlight_req  = (!watchdog) && (cmd.headlights || headlight_held);
 #endif
 #if SPLIT_TURN_INDICATOR
-    int left_active  = (!watchdog) && RESPONDS_TO_LEFT  && cmd.left_indicator;
-    int right_active = (!watchdog) && RESPONDS_TO_RIGHT && cmd.right_indicator;
+    /* Debounce the raw bits so a single interleaved turn==0 frame doesn't drop
+     * the request and let the state machine idle between blinks. */
+    int left_held  = (last_left_tick  != 0) &&
+                     ((HAL_GetTick() - last_left_tick)  <= TURN_RELEASE_DEBOUNCE_MS);
+    int right_held = (last_right_tick != 0) &&
+                     ((HAL_GetTick() - last_right_tick) <= TURN_RELEASE_DEBOUNCE_MS);
+    int left_active  = (!watchdog) && RESPONDS_TO_LEFT  && (cmd.left_indicator  || left_held);
+    int right_active = (!watchdog) && RESPONDS_TO_RIGHT && (cmd.right_indicator || right_held);
 #else
     int turn_req  = (!watchdog) &&
         ((RESPONDS_TO_LEFT  && cmd.left_indicator) ||
@@ -590,7 +639,9 @@ void render_frame(void) {
      * clear to black first so the turn overlay sits on nothing. */
     int brake_owns = brake_step(brake_req);
     if (!brake_owns) pattern_off();
-    int turn_owns  = turn_render(left_active, right_active);
+    /* While braking, end the turn's final blink fully lit so it merges into the
+     * red brake base instead of fading out and blipping back to red. */
+    int turn_owns  = turn_render(left_active, right_active, brake_req);
     if (brake_owns || turn_owns) { commit_frame(255); return; }
 #elif BOARD_ID == BOARD_FRONT
     /* Front: the steady pattern (headlight / strobe / custom) is the base layer
@@ -618,7 +669,7 @@ void render_frame(void) {
     } else {
         pattern_off();
     }
-    turn_render(left_active, right_active);   /* overlay amber on top */
+    turn_render(left_active, right_active, 0);   /* overlay amber on top (normal empty-out) */
     commit_frame(255);
     return;
 #elif (BOARD_ID == BOARD_LEFT) || (BOARD_ID == BOARD_RIGHT)
