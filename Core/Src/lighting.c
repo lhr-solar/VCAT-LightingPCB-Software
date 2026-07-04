@@ -35,8 +35,7 @@ static uint32_t frame_colors[TOTAL_LEDS];
 /**
  * @brief Write a packed RGBW colour into the DMA buffer for a given LED index.
  *        Bit layout: bits 31-24 = W, 23-16 = R, 15-8 = G, 7-0 = B.
- */
-static inline void write_led(int led, uint32_t color) {
+ */static inline void write_led(int led, uint32_t color) {
     uint32_t bit_index = 0;
     for (int i = 31; i >= 0; i--) {
         uint32_t bit = color & (1u << i);
@@ -51,8 +50,7 @@ static inline uint32_t pack_rgbw(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 /**
  * @brief Store a packed RGBW colour for an LED in the logical frame buffer.
- *        Pattern functions use this instead of writing led_pattern directly so
- *        the frame can be brightness-scaled before being committed.
+ *        Use this instead of writing led_pattern directly.
  */
 static inline void set_led(int led, uint32_t color) {
     if (led >= 0 && led < TOTAL_LEDS) frame_colors[led] = color;
@@ -76,12 +74,10 @@ static void commit_frame(uint8_t brightness) {
     }
 }
 
-/* ANIM_OFF turn-indicator flash lifecycle. Instead of a free-running square
- * wave (which would catch an arbitrary slice of a pulse for a short command),
- * this is anchored to the request: it starts a fresh pulse when the turn goes
- * active and ALWAYS finishes the current on+off pulse after the request drops,
- * so a single turn command still renders exactly one clean full blink. Loops
- * while the request is held. flash_advance() returns the current phase. */
+/* ANIM_OFF turn-indicator flash lifecycle. Anchored to the request: starts a
+ * fresh pulse when the turn goes active, always finishes the current on+off
+ * pulse after the request drops (one command = one full blink). Loops while held.
+ * flash_advance() returns the current phase. */
 enum { FL_IDLE, FL_ON, FL_OFF };
 
 static int flash_advance(int *state, uint32_t *t0, int active) {
@@ -177,9 +173,8 @@ static int turn_step(int active) {
 
     const uint32_t color = pack_rgbw(TURN_SWEEP_R, TURN_SWEEP_G, TURN_SWEEP_B, TURN_SWEEP_W);
 
-    /* Animations off: flash the whole strip on/off at TURN_FLASH_PPM while
-     * requested (regs require the indicator to blink), and finish the current
-     * pulse after the request drops so one command = one full blink. */
+    /* Animations off: flash on/off at TURN_FLASH_PPM while requested; finish
+     * the current pulse after the request drops. */
     if (ANIMATION_MODE == ANIM_OFF) {
         static int fstate = FL_IDLE; static uint32_t ft0 = 0;
         if (flash_advance(&fstate, &ft0, active) == FL_IDLE) { turn_state = TN_IDLE; return 0; }
@@ -219,10 +214,8 @@ static int turn_step(int active) {
             if (turn_frame >= TURN_HOLD_FRAMES) {
                 turn_frame = 0;
                 if (active) {
-                    /* Still requested: start another blink cycle. */
                     turn_fill_pos = 0; turn_empty_pos = 0; turn_state = TN_FILLING;
                 } else {
-                    /* Request gone and we've finished emptying: stop. */
                     turn_state = TN_IDLE;
                     return 0;
                 }
@@ -256,16 +249,14 @@ static int turn_step(int active) {
  *  in/hold/out behaviour.
  * ============================================================================ */
 
-/* Duration of each one-LED-per-side expansion step, in main-loop frames. */
-#define BRAKE_FRAMES_PER_STEP   (BRAKE_STEP_MS / MAIN_LOOP_PERIOD_MS)
+/* Duration of each one-LED-per-side expansion step, in main-loop frames. */#define BRAKE_FRAMES_PER_STEP   (BRAKE_STEP_MS / MAIN_LOOP_PERIOD_MS)
 
-/* The brake bar grows from the PHYSICAL centre of the strip out to both ends.
- * Many light bars are a single strip folded back on itself (so the data/return
- * wire ends up at the same side), which means array index TOTAL_LEDS/2 actually
- * sits at the far physical end, not the middle. brake_phys_pos() maps an array
- * index to its physical slot so the expansion always looks centred.
+/* The brake bar grows from the PHYSICAL centre outward. Many light bars fold
+ * back on themselves (wire turnaround at the far end), putting array index
+ * TOTAL_LEDS/2 at the physical far end. brake_phys_pos() maps array indices to
+ * physical slots so the expansion always looks centred.
  *   BRAKE_STRIP_FOLDED = 1 : strip doubles back at its midpoint (default)
- *   BRAKE_STRIP_FOLDED = 0 : single straight linear run
+ *   BRAKE_STRIP_FOLDED = 0 : single straight run
  */
 #ifndef BRAKE_STRIP_FOLDED
 #define BRAKE_STRIP_FOLDED 1
@@ -345,8 +336,7 @@ static int brake_frame  = 0;   /* frame counter within the current step */
 static int brake_step(int active) {
     const uint32_t color = pack_rgbw(BRAKE_R, BRAKE_G, BRAKE_B, BRAKE_W);
 
-    /* Animations off: solid red while applied (centre gap stays dark), off the
-     * instant it drops. */
+    /* Animations off: solid red while applied, off when released. */
     if (ANIMATION_MODE == ANIM_OFF) {
         if (!active) { brake_state = BR_IDLE; return 0; }
         for (int led = 0; led < TOTAL_LEDS; led++) {
@@ -370,7 +360,7 @@ static int brake_step(int active) {
             break;
         case BR_FILLING:
             if (!active) {
-                brake_state = BR_EMPTYING; brake_frame = 0;   /* released mid-fill: head back out */
+                brake_state = BR_EMPTYING; brake_frame = 0;
             } else if (brake_frame >= BRAKE_FRAMES_PER_STEP) {
                 brake_frame = 0;
                 if (++brake_radius >= BRAKE_MAX_RADIUS) { brake_radius = BRAKE_MAX_RADIUS; brake_state = BR_HOLD; }
@@ -381,7 +371,7 @@ static int brake_step(int active) {
             break;
         case BR_EMPTYING:
             if (active) {
-                brake_state = BR_FILLING; brake_frame = 0;    /* re-applied: fill back in */
+                brake_state = BR_FILLING; brake_frame = 0;
             } else if (brake_frame >= BRAKE_FRAMES_PER_STEP) {
                 brake_frame = 0;
                 if (--brake_radius <= 0) { brake_radius = 0; brake_state = BR_IDLE; return 0; }
@@ -474,23 +464,19 @@ static int turn_side_advance(turn_side_t *s, int active, int span, int end_full)
             }
             break;
         case TR_FILLING:
-            /* Always finish filling, even after the request drops, so the last
-             * blink ends fully lit. */
+            /* Always finish filling even after request drops, so the last blink ends lit. */
             if (s->frame >= TURN_FRAMES_PER_STEP) {
                 s->frame = 0;
                 if (++s->fill_pos >= span) { s->fill_pos = span; s->state = TR_HOLD_FULL; }
             }
             break;
         case TR_HOLD_FULL:
-            /* end_full (braking): once the request is gone, stop here fully lit
-             * and release the region so the identical red brake base shows
-             * through - no fade-out, no blip. */
+            /* end_full (braking): request gone → stop here lit, release to brake base. */
             if (!active && end_full) { s->state = TR_IDLE; return 0; }
             if (s->frame >= TURN_HOLD_FRAMES_R) { s->frame = 0; s->empty_pos = 0; s->state = TR_EMPTYING; }
             break;
         case TR_EMPTYING:
-            /* Caught mid-empty with the request gone while braking: reverse and
-             * fill back up so we still end lit. */
+            /* Caught mid-empty, request gone, braking: reverse and fill back up. */
             if (!active && end_full) { s->state = TR_FILLING; s->fill_pos = 0; s->frame = 0; break; }
             if (s->frame >= TURN_FRAMES_PER_STEP) {
                 s->frame = 0;
@@ -498,8 +484,7 @@ static int turn_side_advance(turn_side_t *s, int active, int span, int end_full)
             }
             break;
         case TR_HOLD_EMPTY:
-            /* Request gone during the dark part while braking: fill back on
-             * immediately instead of waiting out the hold or going idle. */
+            /* Request dropped while braking in the dark phase: fill on immediately. */
             if (!active && end_full) {
                 s->frame = 0; s->fill_pos = 0; s->empty_pos = 0; s->state = TR_FILLING;
             } else if (s->frame >= TURN_HOLD_FRAMES_R) {
@@ -547,14 +532,9 @@ static int turn_render(int left_active, int right_active, int end_full) {
     int low_active  = REAR_TURN_SWAP_SIDES ? right_active : left_active;
     int high_active = REAR_TURN_SWAP_SIDES ? left_active  : right_active;
 
-    /* Animations off: flash the requested half/halves on/off at TURN_FLASH_PPM
-     * (regs require the indicator to blink) and finish the current pulse after
-     * the request drops, so one command = one full blink. The blink's "off"
-     * phase leaves the base layer showing:
-     *   - front: the dimmed-white headlight (yellow -> dim white -> yellow ...),
-     *   - rear : black in the side (the side owns its region, blanking brake).
-     * The participating side(s) are latched at each pulse start so a command
-     * that drops mid-pulse still finishes lighting the same side(s). */
+    /* Animations off: flash the requested half/halves on/off at TURN_FLASH_PPM;
+     * finish the current pulse after request drops (one command = one full blink).
+     * Sides are latched at each pulse start so a drop mid-pulse finishes cleanly. */
     if (ANIMATION_MODE == ANIM_OFF) {
         static int fstate = FL_IDLE; static uint32_t ft0 = 0;
         static int lat_low = 0, lat_high = 0;
@@ -653,29 +633,25 @@ void render_frame(void) {
     int watchdog = (HAL_GetTick() - last_cmd_tick) > COMMAND_WATCHDOG_MS;
     board_fault  = watchdog ? FAULT_LIGHT_CMD_WATCHDOG : FAULT_OK;
 
-    /* The BPS strobe is a separate external light - just drive its GPIO high
-     * while commanded. It is independent of the RGB strip, so the strobe and the
-     * turn/hazard/brake patterns can all be active at the same time. */
+    /* The BPS strobe is a separate external light - drive its GPIO independently
+     * of the strip so it can be active alongside any strip pattern. */
     HAL_GPIO_WritePin(BPS_STROBE_GPIO_Port, BPS_STROBE_Pin,
                       (!watchdog && cmd.bps_strobe) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-    /* A request is only "held" while commands are actually arriving. When they
-     * stop (watchdog) the request drops, which lets each animated effect play
-     * its out-animation to completion rather than snapping off. */
+    /* Requests are only held while commands are arriving. On watchdog expiry they
+     * drop, letting each animated effect play its out-animation rather than
+     * snapping off. */
 #if USE_BRAKE
     int brake_held = (last_brake_tick != 0) &&
                      ((HAL_GetTick() - last_brake_tick) <= BRAKE_RELEASE_DEBOUNCE_MS);
     int brake_req  = (!watchdog) && (cmd.brake || brake_held);
 #elif BOARD_ID == BOARD_FRONT
-    /* Headlight base layer is debounced like the brake so interleaved
-     * headlight/turn frames don't blank it for a tick. */
     int headlight_held = (last_headlight_tick != 0) &&
                          ((HAL_GetTick() - last_headlight_tick) <= HEADLIGHT_RELEASE_DEBOUNCE_MS);
     int headlight_req  = (!watchdog) && (cmd.headlights || headlight_held);
 #endif
 #if SPLIT_TURN_INDICATOR
-    /* Debounce the raw bits so a single interleaved turn==0 frame doesn't drop
-     * the request and let the state machine idle between blinks. */
+    /* Debounce raw bits so a single interleaved turn==0 frame doesn't idle the state machine. */
     int left_held  = (last_left_tick  != 0) &&
                      ((HAL_GetTick() - last_left_tick)  <= TURN_RELEASE_DEBOUNCE_MS);
     int right_held = (last_right_tick != 0) &&
@@ -692,33 +668,22 @@ void render_frame(void) {
      * brake_step()/turn handlers are advanced every tick so their out-animations
      * keep running even after the request drops. */
 #if BOARD_ID == BOARD_REAR
-    /* Rear: brake (red) is the base layer and the turn indicators (amber)
-     * overlay on top, so braking and turning can show simultaneously - the turn
-     * blinks amber over its segments while the red brake shows between blinks
-     * and on the non-turning side. Both state machines advance every tick.
-     * brake_step() paints the whole strip when it owns the frame; if it doesn't,
-     * clear to black first so the turn overlay sits on nothing. */
+    /* Rear: brake (red) is the base layer; turn (amber) overlays on top.
+     * Both state machines advance every tick for smooth out-animations. */
     int brake_owns = brake_step(brake_req);
     if (!brake_owns) pattern_off();
-    /* While braking, end the turn's final blink fully lit so it merges into the
-     * red brake base instead of fading out and blipping back to red. */
+    /* While braking, end the turn's final blink lit so it merges into the brake base. */
     int turn_owns  = turn_render(left_active, right_active, brake_req);
     if (brake_owns || turn_owns) { commit_frame(255); return; }
 #elif BOARD_ID == BOARD_FRONT
-    /* Front: the steady pattern (headlight / strobe / custom) is the base layer
-     * and the turn indicators (amber) overlay on top, so headlights and turn
-     * signals show simultaneously - the turn blinks amber over its segments
-     * while the headlight shows between blinks and on the non-turning side. */
-    /* Dim the headlight while the turn indicator is actually animating. Keyed
-     * off the split-turn state machines (non-idle) rather than the raw command
-     * bits, so it stays stable for the whole blink lifecycle and doesn't flip
-     * dim<->full when the sender interleaves headlight-only and headlight+turn
-     * frames. In ANIM_OFF there's no state machine, so fall back to the request. */
+    /* Front: steady pattern is the base layer; amber turn overlays on top. */
+    /* Dim the headlight while the turn indicator is animating. Keyed off the
+     * state machines rather than raw command bits so it stays stable through
+     * interleaved frames. ANIM_OFF has no state machine so falls back to request. */
     int turn_running = split_turn_owns ||
                        (turn_low.state != TR_IDLE) || (turn_high.state != TR_IDLE) ||
                        ((ANIMATION_MODE == ANIM_OFF) && (left_active || right_active));
-    /* Linger the dim briefly after the animation stops so the base layer doesn't
-     * blip back to full right as the amber clears its last frame. */
+    /* Linger the dim briefly after the animation stops to avoid a blip on the last frame. */
     static uint32_t last_turn_dim_tick = 0;
     if (turn_running) last_turn_dim_tick = HAL_GetTick();
     int turn_dim = turn_running ||
@@ -735,10 +700,7 @@ void render_frame(void) {
     commit_frame(255);
     return;
 #elif (BOARD_ID == BOARD_LEFT) || (BOARD_ID == BOARD_RIGHT)
-    /* Side panels: turn indicator only on the strip. The BPS strobe is a
-     * separate external light driven by its own GPIO above, not the strip.
-     * turn_step() paints the whole strip while active and follows its
-     * out-animation; when idle it draws nothing, so blank the strip. */
+    /* Side panels: turn only on strip; BPS strobe is on its own GPIO above. */
     if (!turn_step(turn_req)) pattern_off();
     commit_frame(255);
     return;

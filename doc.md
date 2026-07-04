@@ -238,7 +238,7 @@ In `ANIM_OFF` the turn indicator does not stay solid — it flashes on/off (regs
 require a blinking indicator). The rate is a knob:
 
 ```c
-#define TURN_FLASH_PPM   90   // ANIM_OFF turn flash rate, pulses/min (regs 60-120)
+#define TURN_FLASH_PPM          67
 ```
 
 The flash is **anchored to the request**, not a free-running wave: a fresh pulse
@@ -364,7 +364,7 @@ config — no need to touch the pattern engine.
 - **Clock:** 80 MHz SYSCLK → TIM16 period = 51 counts (≈1.25 µs/bit, matching WS281x spec)
   - `LOW` duty = 30 counts (≈375 ns high → WS281x "0" bit)
   - `HI` duty = 41 counts (≈512 ns high → WS281x "1" bit)
-- `bsp_strip_show()` blocks until the previous DMA transfer completes (via `strip_dma_done` flag), then starts the next one. The `HAL_TIM_PWM_PulseFinishedCallback` ISR stops the timer and sets the flag when done.
+- `bsp_strip_show()` resets the timer counter and starts a DMA-driven PWM transfer. The `HAL_TIM_PWM_PulseFinishedCallback` ISR stops the timer when the frame is done.
 
 ### CAN
 
@@ -377,7 +377,7 @@ config — no need to touch the pattern engine.
 
 | Pin | Function |
 |-----|----------|
-| PB11 | Toggles on every successfully parsed CAN RX frame |
+| PB11 | Toggled on CAN RX and every main loop iteration |
 | PA12 | General purpose output (currently unused) |
 | PB4 | BPS strobe external fixture GPIO (defined in `main.h`) |
 

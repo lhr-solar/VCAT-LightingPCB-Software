@@ -41,13 +41,10 @@
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             0
     #define HEADLIGHT_W             255
-    /* While a turn indicator is blinking, the headlight underneath dims to this
-     * white level (0-255) so the amber sweep stands out. */
+    /* Headlight white level while a turn is animating (dims so amber stands out). */
     #define HEADLIGHT_TURN_DIM_W    64
     #define MATTHEW_NUM_QUAD_CHIPS      9
-    /* Lit segments per side for the split turn indicator. The front bar is
-     * physically shorter than the rear, so it uses fewer segments per side to
-     * keep a sensible dark centre. */
+    /* Lit segments per side; front bar is shorter than rear, fewer segments to keep a sensible dark centre. */
     #define TURN_SEGMENTS_PER_SIDE      6
 #elif BOARD_ID == BOARD_LEFT
     #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
@@ -63,8 +60,7 @@
     #define HEADLIGHT_R             64     /* rear "headlight" = tail light, red */
     #define HEADLIGHT_W             0
     #define MATTHEW_NUM_QUAD_CHIPS      11
-    /* Lit segments per side for the split turn indicator (and the matching
-     * brake-bar inner edges). */
+    /* Lit segments per side for the split turn indicator (matches brake-bar inner edges). */
     #define TURN_SEGMENTS_PER_SIDE      7
 #elif BOARD_ID == BOARD_RIGHT
     #define MY_STATUS_ID            CAN_ID_STATUS_RIGHT
@@ -89,26 +85,19 @@
 #define STATUS_TX_PERIOD_MS         100      /* 10 Hz status                     */
 #define MAIN_LOOP_PERIOD_MS         1
 
-/* Treat the brake as still held for this long after the last frame that had the
- * brake bit set. Bridges brief dropouts (e.g. a sender that interleaves
- * brake-only and turn-only CAN frames) so the brake doesn't flicker into its
- * release animation on a single brake==0 frame. Keep well under
- * COMMAND_WATCHDOG_MS; larger = more glitch tolerance but more release lag. */
+/* Hold brake active for this long after the last frame with the brake bit set.
+ * Bridges brief dropouts from senders that interleave brake and turn frames. */
 #define BRAKE_RELEASE_DEBOUNCE_MS   150
 
-/* Same debounce for the headlight base layer (front overlays the turn indicator
- * on the headlight; interleaved headlight/turn frames must not blank it). */
+/* Same debounce for the headlight base layer. */
 #define HEADLIGHT_RELEASE_DEBOUNCE_MS   150
 
-/* Keep the front headlight dimmed for this long after the turn indicator stops
- * animating, so the base layer doesn't blip back to full brightness right as the
- * amber finishes its last frame. */
+/* Keep the front headlight dimmed for this long after the turn stops animating,
+ * so it doesn't blip back to full brightness on the last amber frame. */
 #define HEADLIGHT_TURN_DIM_LINGER_MS    100
 
-/* Treat a turn indicator as still requested for this long after the last frame
- * that had its bit set. Bridges brief dropouts from senders that interleave
- * turn and brake/headlight frames so the split indicator doesn't spuriously go
- * idle (and flash the brake/headlight base) between blinks. */
+/* Hold a turn indicator active for this long after the last frame with its bit set.
+ * Bridges interleaved turn/brake frames so the split indicator doesn't blip idle. */
 #define TURN_RELEASE_DEBOUNCE_MS        150
 
 /* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
@@ -138,9 +127,8 @@
 #define TURN_HOLD_MS            80   /* hold time at full / empty between phases  */
 #define BRAKE_STEP_MS           10   /* per-LED step for the brake-bar expansion  */
 
-/* ANIM_OFF turn-indicator flash rate, in pulses per minute (one pulse = one
- * on+off cycle, 50% duty). Regs require 60-120 ppm; 90 is a good target. Only
- * used when ANIMATION_MODE == ANIM_OFF (ANIM_ON blinks via its sweep instead). */
+/* ANIM_OFF turn flash rate (pulses/min, 50% duty). Regs require 60-120 ppm. Only
+ * used when ANIMATION_MODE == ANIM_OFF. */
 #define TURN_FLASH_PPM          67
 
 /* ============================================================================

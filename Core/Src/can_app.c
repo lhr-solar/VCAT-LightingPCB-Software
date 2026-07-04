@@ -58,16 +58,9 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
         cmd.bps_strobe       = (b >> 5) & 0x01;
         cmd.custom_mode      = (b >> 6) & 0x03;
         last_cmd_tick = HAL_GetTick();
-        /* Track the last time we actually saw the brake asserted, so the render
-         * loop can debounce brief brake-bit dropouts (e.g. CAN frames that
-         * interleave brake and turn commands) instead of starting the brake's
-         * release animation on a single 0. */
+        /* Track the last brake/headlight/turn tick for debouncing interleaved frames. */
         if (cmd.brake)      last_brake_tick     = HAL_GetTick();
-        /* Same idea for the headlight base layer (front board overlays turn on
-         * the headlight; interleaved frames must not blank it for a tick). */
         if (cmd.headlights) last_headlight_tick = HAL_GetTick();
-        /* Same idea for the turn indicators: bridge interleaved turn/brake or
-         * turn/headlight frames so the split indicator doesn't blip idle. */
         if (cmd.left_indicator)  last_left_tick  = HAL_GetTick();
         if (cmd.right_indicator) last_right_tick = HAL_GetTick();
 
