@@ -147,9 +147,9 @@ This is the main knobs file. **Change `BOARD_ID` before flashing each board.**
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `BOARD_FRONT` | 0 | White headlight (W channel), split turn overlay, no brake |
+| `BOARD_FRONT` | 0 | White headlight lit only on the two turn-indicator end segments (dark centre), amber split turn overlaid on top, headlight dims while turning, no brake |
 | `BOARD_LEFT` | 1 | Left turn only, no headlight colour, no brake |
-| `BOARD_REAR` | 2 | Red tail light, split turn overlay, brake engine |
+| `BOARD_REAR` | 2 | Red tail light, **red** split turn that owns its side (blinks red↔black, blanking the brake underneath), brake engine |
 | `BOARD_RIGHT` | 3 | Right turn only, no headlight colour, no brake |
 | `BOARD_CANOPY` | 4 | White headlight, full-strip turn sweep, brake engine |
 
@@ -174,14 +174,57 @@ This is the main knobs file. **Change `BOARD_ID` before flashing each board.**
 
 Per-board defaults: Front/Canopy = pure white (`W=255`), Rear = dim red (`R=64`), Left/Right = off.
 
+**Front headlight is segment-only.** For regulatory reasons the front board does
+not light the middle of the strip. `pattern_headlight_front()` lights only the
+two end segments — the exact slots the split turn indicator occupies — leaving
+the centre dark whether or not an indicator is active.
+
+```c
+#define HEADLIGHT_TURN_DIM_W   64   // front headlight white level while a turn
+                                    // indicator is animating (dims from HEADLIGHT_W
+                                    // so the amber sweep stands out). Front board only.
+```
+
 ### Timing constants
 
 ```c
-#define COMMAND_WATCHDOG_MS         500   // ms with no CAN → LEDs off
-#define STATUS_TX_PERIOD_MS         100   // 10 Hz status TX
-#define MAIN_LOOP_PERIOD_MS         1     // render loop period (ms)
-#define BRAKE_RELEASE_DEBOUNCE_MS   150   // hold brake on after bit drops
-#define HEADLIGHT_RELEASE_DEBOUNCE_MS 150 // hold headlight on after bit drops
+#define COMMAND_WATCHDOG_MS            500   // ms with no CAN → LEDs off
+#define STATUS_TX_PERIOD_MS            100   // 10 Hz status TX
+#define MAIN_LOOP_PERIOD_MS            1     // render loop period (ms)
+#define BRAKE_RELEASE_DEBOUNCE_MS      150   // hold brake on after bit drops
+#define HEADLIGHT_RELEASE_DEBOUNCE_MS  150   // hold headlight on after bit drops
+#define TURN_RELEASE_DEBOUNCE_MS       150   // hold a turn indicator "requested"
+                                             // after its bit drops (bridges senders
+                                             // that interleave turn/brake frames so
+                                             // the split indicator doesn't blip idle)
+#define HEADLIGHT_TURN_DIM_LINGER_MS   100   // keep the front headlight dimmed this
+                                             // long after the turn stops animating
+```
+
+### Animation timing
+
+All in milliseconds; `lighting.c` converts them to main-loop frames via
+`MAIN_LOOP_PERIOD_MS`, so changing the loop period rescales them automatically.
+
+```c
+#define TURN_STEP_MS    20   // per-LED/segment step during fill & empty
+#define TURN_HOLD_MS    80   // hold time at full / empty between phases
+#define BRAKE_STEP_MS   10   // per-LED step for the brake-bar expansion
+```
+
+### Pattern colours
+
+RGBW channels (0-255 each), consumed by the pattern functions in `lighting.c`.
+
+```c
+// Full-strip sweep turn (Left/Right/Canopy) — amber
+#define TURN_SWEEP_R 255 / TURN_SWEEP_G 100 / TURN_SWEEP_B 0 / TURN_SWEEP_W 0
+// Front split turn overlaid on the headlight — amber
+#define TURN_FRONT_R 255 / TURN_FRONT_G 64  / TURN_FRONT_B 0 / TURN_FRONT_W 0
+// Rear split turn — red (matches the brake so it merges cleanly)
+#define TURN_REAR_R  255 / TURN_REAR_G  0   / TURN_REAR_B  0 / TURN_REAR_W  0
+// Brake bar — red
+#define BRAKE_R      255 / BRAKE_G       0   / BRAKE_B      0 / BRAKE_W      0
 ```
 
 ### Animation mode
@@ -193,12 +236,14 @@ Per-board defaults: Front/Canopy = pure white (`W=255`), Rear = dim red (`R=64`)
 
 ### Turn indicator geometry (rear/front split indicator)
 
+Set per board in the `#if BOARD_ID == ...` block:
+
 ```c
 #define TURN_SEGMENTS_PER_SIDE   6   // Front (shorter bar, BRAKE_SPAN=16)
                                  7   // Rear  (longer bar,  BRAKE_SPAN=22)
 ```
 
-Increasing this number extends how far the amber sweeps in from each end. The centre gap shrinks correspondingly.
+Increasing this number extends how far the indicator sweeps in from each end. The centre gap shrinks correspondingly. Boards that use the full-strip sweep (Left/Right/Canopy) don't need it — `lighting.c` provides a default.
 
 ```c
 #define REAR_TURN_SWAP_SIDES   0   // set to 1 if left/right halves are
@@ -223,13 +268,19 @@ When folded, the strip's physical midpoint is at array index 0/`TOTAL_LEDS-1` (t
 Higher in the list wins. Each board has a dedicated dispatch path compiled in via `#if BOARD_ID == ...`.
 
 **Front:**
-BPS strobe → headlight (debounced) → custom mode → off
-Turn indicator amber overlaid on top of whatever is beneath (simultaneous headlight + turn).
+Base layer: headlight (debounced) → custom mode → off. The headlight lights only
+the two turn-indicator end segments (dark centre) and **dims to
+`HEADLIGHT_TURN_DIM_W`** while a turn is animating. Amber split turn is overlaid
+on top (simultaneous headlight + turn). The BPS strobe is a separate GPIO fixture
+(see below), independent of the strip.
 
 **Rear:**
-Brake (red, grows from centre) as base layer.
-Turn indicator amber overlaid on top (simultaneous brake + turn).
-If neither owns the frame: BPS strobe → headlight → custom mode → off.
+Brake (red, grows from centre) as base layer. The split turn is **red** and
+*owns* its side while animating: it blinks red↔black over its segments, blanking
+the brake underneath, so between blinks that side goes dark while the rest of the
+bar stays red. While braking, the turn's first and last blinks are forced to the
+lit state so they merge seamlessly into the red brake instead of blipping (see
+`end_full` below). If neither owns the frame: headlight → custom mode → off.
 
 **Left / Right:**
 Turn indicator (full sweep). While not turning: BPS strobe if requested, else off. No headlight, no brake.
@@ -242,9 +293,13 @@ Brake → turn → BPS strobe → headlight → custom mode → off.
 | Function | Description |
 |----------|-------------|
 | `pattern_off()` | All LEDs off |
-| `pattern_headlight()` | Solid colour defined by `HEADLIGHT_R`/`HEADLIGHT_W` |
-| `pattern_bps_strobe()` | White flash at ~1.5 Hz (90 pulses/min), pure W channel |
+| `pattern_headlight()` | Solid full-strip colour `HEADLIGHT_R`/`HEADLIGHT_W` (rear/canopy) |
+| `pattern_headlight_front(turn_active)` | Front only: lights just the two turn-segment ends (dark centre); dims the white channel to `HEADLIGHT_TURN_DIM_W` when `turn_active` |
 | `pattern_custom_mode(mode)` | Modes 1-3 (currently placeholder → shows headlight colour; TODO) |
+
+The BPS strobe is **not** an LED pattern — `render_frame()` drives it directly as
+a GPIO (`BPS_STROBE_Pin`) whenever the strobe bit is set, independent of the RGB
+strip, so it can be active alongside any strip pattern.
 
 ### Animated state machines
 
@@ -253,44 +308,27 @@ Brake → turn → BPS strobe → headlight → custom mode → off.
 Amber fills LED by LED from one end, holds, empties back out. When the request drops it finishes the current cycle out before going idle (no snap-off).
 
 **Turn indicator — split sweep** (`turn_render` + `turn_side_advance`, used by Front/Rear):
-Two independent halves (`turn_low` = left, `turn_high` = right), each running the same fill/hold/empty/hold lifecycle. Overlaid on top of the base layer (headlight or brake), so the amber blinks over its region while the base colour shows between blinks and on the inactive side.
+Two independent halves (`turn_low` = left, `turn_high` = right), each running the same fill/hold/empty/hold lifecycle.
+- **Front:** amber, painted only on its lit slots, so the (dimmed) headlight shows between blinks and on the inactive side.
+- **Rear:** red, and while a side is animating it takes over that whole side — red where lit, **black in the gaps** (overriding the brake base).
+
+`turn_side_advance()` takes an `end_full` flag (passed as `brake_req` on the rear, `0` on the front). When set:
+- the turn *starts* in the closing phase from full (so on a red brake base the first blink begins already-lit and blinks by going dark — no start blip), and
+- when the request drops it always finishes in the **lit** state and releases the region to the identical red brake base (no fade-out, no end blip), reversing back to fill if it was caught mid-empty.
+
+The raw left/right bits are debounced by `TURN_RELEASE_DEBOUNCE_MS` before feeding the state machines, so interleaved turn/brake frames don't make a side spuriously idle between blinks.
 
 **Brake** (`brake_step`, used by Rear/Canopy):
 `IDLE → FILLING → HOLD → EMPTYING → IDLE`
 Red bar grows outward from the centre to both ends, holds, then contracts when released. On the rear board it uses the same physical region as the turn indicators. On canopy it grows from the exact strip centre.
 
-### Animation timing knobs (inside `lighting.c`)
+### Tuning animation timing and colour
 
-These are `#define`s local to the relevant state machine:
-
-| Macro | Default | Effect |
-|-------|---------|--------|
-| `TURN_FRAMES_PER_LED` | `20 / MAIN_LOOP_PERIOD_MS` | How many ms per LED step during fill/empty |
-| `TURN_HOLD_FRAMES` | `80 / MAIN_LOOP_PERIOD_MS` | Hold time at full/empty (ms) |
-| `TURN_FRAMES_PER_STEP` | `20 / MAIN_LOOP_PERIOD_MS` | Same as above for split indicator |
-| `TURN_HOLD_FRAMES_R` | `80 / MAIN_LOOP_PERIOD_MS` | Hold time for split indicator |
-| `BRAKE_FRAMES_PER_STEP` | `10 / MAIN_LOOP_PERIOD_MS` | ms per LED step for brake expansion |
-| `STROBE_PERIOD_FRAMES` | `367 / MAIN_LOOP_PERIOD_MS` | Full strobe cycle (≈1.5 Hz) |
-| `STROBE_ON_FRAMES` | `42 / MAIN_LOOP_PERIOD_MS` | On-time per flash (≈42 ms) |
-
-All of these are expressed as `ms / MAIN_LOOP_PERIOD_MS` so changing `MAIN_LOOP_PERIOD_MS` automatically scales them.
-
-### Turn indicator colour
-
-```c
-// Full-strip sweep (Left/Right/Canopy) — in turn_step():
-const uint32_t color = pack_rgbw(255, 100, 0, 0);   // amber
-
-// Split indicator (Front/Rear) — in turn_render():
-const uint32_t color = pack_rgbw(255, 64, 0, 0);    // slightly deeper amber
-```
-
-### Brake colour
-
-```c
-// In brake_step():
-const uint32_t color = pack_rgbw(255, 0, 0, 0);   // pure red
-```
+All animation timing and pattern colours are now knobs in `lighting_config.h`
+(see **Animation timing** and **Pattern colours** above), not literals in
+`lighting.c`. `lighting.c` only derives frame counts from the `*_MS` values, e.g.
+`TURN_FRAMES_PER_STEP = TURN_STEP_MS / MAIN_LOOP_PERIOD_MS`. To retune, edit the
+config — no need to touch the pattern engine.
 
 ---
 
@@ -335,6 +373,8 @@ MSI → PLL (×40 / ÷2) → 80 MHz SYSCLK. All APB clocks at 80 MHz.
    - `RESPONDS_TO_LEFT` / `RESPONDS_TO_RIGHT`
    - `HEADLIGHT_R` / `HEADLIGHT_W`
    - `MATTHEW_NUM_QUAD_CHIPS`
+   - `TURN_SEGMENTS_PER_SIDE` (only if the board uses the split indicator; full-strip-sweep boards fall back to the default in `lighting.c`)
+   - `HEADLIGHT_TURN_DIM_W` (only if the board dims its headlight while turning, like the front)
 3. Add a dispatch path in `render_frame()` in `lighting.c` (copy the closest existing board's block).
 4. Add the new node to `LightingCAN.dbc` and assign a status CAN ID.
 

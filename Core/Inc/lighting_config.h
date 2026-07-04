@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_REAR        /* <-- change per build target */
+  #define BOARD_ID      BOARD_FRONT        /* <-- change per build target */
 #endif
 
 /* CAN IDs */
@@ -45,6 +45,10 @@
      * white level (0-255) so the amber sweep stands out. */
     #define HEADLIGHT_TURN_DIM_W    64
     #define MATTHEW_NUM_QUAD_CHIPS      9
+    /* Lit segments per side for the split turn indicator. The front bar is
+     * physically shorter than the rear, so it uses fewer segments per side to
+     * keep a sensible dark centre. */
+    #define TURN_SEGMENTS_PER_SIDE      6
 #elif BOARD_ID == BOARD_LEFT
     #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
     #define RESPONDS_TO_LEFT        1
@@ -59,6 +63,9 @@
     #define HEADLIGHT_R             64     /* rear "headlight" = tail light, red */
     #define HEADLIGHT_W             0
     #define MATTHEW_NUM_QUAD_CHIPS      11
+    /* Lit segments per side for the split turn indicator (and the matching
+     * brake-bar inner edges). */
+    #define TURN_SEGMENTS_PER_SIDE      7
 #elif BOARD_ID == BOARD_RIGHT
     #define MY_STATUS_ID            CAN_ID_STATUS_RIGHT
     #define RESPONDS_TO_LEFT        0
@@ -121,6 +128,50 @@
 #define HI                          41
 #define TOTAL_LEDS                  (4 * MATTHEW_NUM_QUAD_CHIPS)
 #define FIRST_ACTIVE                1
+
+/* ============================================================================
+ *  ANIMATION TIMING
+ *    All in milliseconds; lighting.c converts them to main-loop frames via
+ *    MAIN_LOOP_PERIOD_MS, so changing MAIN_LOOP_PERIOD_MS rescales them.
+ * ============================================================================ */
+#define TURN_STEP_MS            20   /* per-LED/segment step during fill & empty */
+#define TURN_HOLD_MS            80   /* hold time at full / empty between phases  */
+#define BRAKE_STEP_MS           10   /* per-LED step for the brake-bar expansion  */
+
+/* ============================================================================
+ *  PATTERN COLOURS  (R, G, B, W channels, each 0-255)
+ * ============================================================================ */
+/* Full-strip sweep turn indicator (left / right / canopy) - amber. */
+#define TURN_SWEEP_R            255
+#define TURN_SWEEP_G            100
+#define TURN_SWEEP_B            0
+#define TURN_SWEEP_W            0
+/* Front split turn indicator, overlaid on the headlight - amber. */
+#define TURN_FRONT_R            255
+#define TURN_FRONT_G            64
+#define TURN_FRONT_B            0
+#define TURN_FRONT_W            0
+/* Rear split turn indicator - red (matches the brake so it merges cleanly). */
+#define TURN_REAR_R             255
+#define TURN_REAR_G             0
+#define TURN_REAR_B             0
+#define TURN_REAR_W             0
+/* Brake bar - red. */
+#define BRAKE_R                 255
+#define BRAKE_G                 0
+#define BRAKE_B                 0
+#define BRAKE_W                 0
+
+/* ============================================================================
+ *  INDICATOR / BRAKE GEOMETRY
+ * ============================================================================ */
+/* Strip physically folds back on itself at its midpoint (1) or is a single
+ * straight run (0). Sets how the brake / rear-indicator centre is derived. */
+#define BRAKE_STRIP_FOLDED      1
+/* Set to 1 if the rear bar's left/right halves come out physically reversed. */
+#define REAR_TURN_SWAP_SIDES    0
+/* TURN_SEGMENTS_PER_SIDE is set per board above (front/rear); other boards fall
+ * back to a default in lighting.c since they use the full-strip sweep. */
 
 /* ============================================================================
  *  ANIMATION MODE

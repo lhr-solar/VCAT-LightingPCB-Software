@@ -141,11 +141,10 @@ static int turn_frame      = 0;
 
 static int turn_step(int active) {
     #define ACTIVE_LEDS         (TOTAL_LEDS - FIRST_ACTIVE)
-    #define TURN_FRAMES_PER_LED (20 / MAIN_LOOP_PERIOD_MS)
-    #define TURN_HOLD_FRAMES    (80 / MAIN_LOOP_PERIOD_MS)
+    #define TURN_FRAMES_PER_LED (TURN_STEP_MS / MAIN_LOOP_PERIOD_MS)
+    #define TURN_HOLD_FRAMES    (TURN_HOLD_MS / MAIN_LOOP_PERIOD_MS)
 
-    /* Amber: R=255, G=100, B=0, W=0 */
-    const uint32_t color = pack_rgbw(255, 100, 0, 0);
+    const uint32_t color = pack_rgbw(TURN_SWEEP_R, TURN_SWEEP_G, TURN_SWEEP_B, TURN_SWEEP_W);
 
     /* Animations off: solid on while requested, off the instant it drops. */
     if (ANIMATION_MODE == ANIM_OFF) {
@@ -223,7 +222,7 @@ static int turn_step(int active) {
  * ============================================================================ */
 
 /* Duration of each one-LED-per-side expansion step, in main-loop frames. */
-#define BRAKE_FRAMES_PER_STEP   (10 / MAIN_LOOP_PERIOD_MS)
+#define BRAKE_FRAMES_PER_STEP   (BRAKE_STEP_MS / MAIN_LOOP_PERIOD_MS)
 
 /* The brake bar grows from the PHYSICAL centre of the strip out to both ends.
  * Many light bars are a single strip folded back on itself (so the data/return
@@ -258,14 +257,10 @@ static int turn_step(int active) {
  * per side, anchored at each side's far end and growing inward toward a dark
  * centre. The dark middle is whatever's left over (BRAKE_SPAN - 2*N slots), so
  * with equal sides the pattern stays centred. */
+/* Front/rear set this in lighting_config.h; the other boards use the full-strip
+ * sweep and never light this region, so a default keeps the macros well-formed. */
 #ifndef TURN_SEGMENTS_PER_SIDE
-  #if BOARD_ID == BOARD_FRONT
-    /* Front bar is physically shorter (BRAKE_SPAN 16 vs the rear's 22), so its
-     * indicators use fewer segments per side to keep a sensible dark centre. */
-    #define TURN_SEGMENTS_PER_SIDE 6
-  #else
-    #define TURN_SEGMENTS_PER_SIDE 7
-  #endif
+  #define TURN_SEGMENTS_PER_SIDE 7
 #endif
 
 /* Low half lit slots [0 .. TURN_BASE_LOW]; high half lit slots
@@ -313,7 +308,7 @@ static int brake_frame  = 0;   /* frame counter within the current step */
  *        Returns 1 if the brake owns the frame this tick, 0 once fully idle.
  */
 static int brake_step(int active) {
-    const uint32_t color = pack_rgbw(255, 0, 0, 0);
+    const uint32_t color = pack_rgbw(BRAKE_R, BRAKE_G, BRAKE_B, BRAKE_W);
 
     /* Animations off: solid red while applied (centre gap stays dark), off the
      * instant it drops. */
@@ -419,8 +414,8 @@ static turn_side_t turn_high = { TR_IDLE, 0, 0, 0 };
  *        `span` is the number of slots this half covers from its inner base.
  */
 static int turn_side_advance(turn_side_t *s, int active, int span, int end_full) {
-    #define TURN_FRAMES_PER_STEP (20 / MAIN_LOOP_PERIOD_MS)
-    #define TURN_HOLD_FRAMES_R   (80 / MAIN_LOOP_PERIOD_MS)
+    #define TURN_FRAMES_PER_STEP (TURN_STEP_MS / MAIN_LOOP_PERIOD_MS)
+    #define TURN_HOLD_FRAMES_R   (TURN_HOLD_MS / MAIN_LOOP_PERIOD_MS)
     s->frame++;
     switch (s->state) {
         case TR_IDLE:
@@ -502,10 +497,10 @@ static int turn_render(int left_active, int right_active, int end_full) {
     /* Rear turn is red (not amber): it "owns" its whole side region and blinks
      * red<->black there, blanking the brake underneath so you get a clean red
      * blink with black gaps instead of amber-over-red. */
-    const uint32_t color = pack_rgbw(255, 0, 0, 0);
+    const uint32_t color = pack_rgbw(TURN_REAR_R, TURN_REAR_G, TURN_REAR_B, TURN_REAR_W);
 #else
     /* Front: amber overlay painted on lit slots only (headlight shows between). */
-    const uint32_t color = pack_rgbw(255, 64, 0, 0);
+    const uint32_t color = pack_rgbw(TURN_FRONT_R, TURN_FRONT_G, TURN_FRONT_B, TURN_FRONT_W);
 #endif
 
     int low_active  = REAR_TURN_SWAP_SIDES ? right_active : left_active;
