@@ -76,6 +76,37 @@ static void commit_frame(uint8_t brightness) {
     }
 }
 
+/* ANIM_OFF turn-indicator flash lifecycle. Instead of a free-running square
+ * wave (which would catch an arbitrary slice of a pulse for a short command),
+ * this is anchored to the request: it starts a fresh pulse when the turn goes
+ * active and ALWAYS finishes the current on+off pulse after the request drops,
+ * so a single turn command still renders exactly one clean full blink. Loops
+ * while the request is held. flash_advance() returns the current phase. */
+enum { FL_IDLE, FL_ON, FL_OFF };
+
+static int flash_advance(int *state, uint32_t *t0, int active) {
+    #define FLASH_PERIOD_MS (60000u / TURN_FLASH_PPM)
+    #define FLASH_ON_MS     (FLASH_PERIOD_MS / 2u)
+    #define FLASH_OFF_MS    (FLASH_PERIOD_MS - FLASH_ON_MS)
+    uint32_t now = HAL_GetTick();
+    switch (*state) {
+        case FL_IDLE:
+            if (!active) return FL_IDLE;
+            *state = FL_ON; *t0 = now;
+            break;
+        case FL_ON:
+            if (now - *t0 >= FLASH_ON_MS) { *state = FL_OFF; *t0 = now; }
+            break;
+        case FL_OFF:
+            if (now - *t0 >= FLASH_OFF_MS) {
+                if (active) { *state = FL_ON; *t0 = now; }   /* held: next pulse */
+                else        { *state = FL_IDLE; }            /* done: one full pulse */
+            }
+            break;
+    }
+    return *state;
+}
+
 /* ============================================================================
  *  PATTERN FUNCTIONS
  *  Each fills frame_colors for one frame, called once per main-loop tick.
@@ -146,11 +177,15 @@ static int turn_step(int active) {
 
     const uint32_t color = pack_rgbw(TURN_SWEEP_R, TURN_SWEEP_G, TURN_SWEEP_B, TURN_SWEEP_W);
 
-    /* Animations off: solid on while requested, off the instant it drops. */
+    /* Animations off: flash the whole strip on/off at TURN_FLASH_PPM while
+     * requested (regs require the indicator to blink), and finish the current
+     * pulse after the request drops so one command = one full blink. */
     if (ANIMATION_MODE == ANIM_OFF) {
-        if (!active) { turn_state = TN_IDLE; return 0; }
+        static int fstate = FL_IDLE; static uint32_t ft0 = 0;
+        if (flash_advance(&fstate, &ft0, active) == FL_IDLE) { turn_state = TN_IDLE; return 0; }
+        int on = (fstate == FL_ON);
         for (int led = 0; led < TOTAL_LEDS; led++) {
-            set_led(led, (led < FIRST_ACTIVE) ? 0 : color);
+            set_led(led, (led < FIRST_ACTIVE || !on) ? 0 : color);
         }
         return 1;
     }
@@ -407,6 +442,12 @@ typedef struct { int state; int fill_pos; int empty_pos; int frame; } turn_side_
 static turn_side_t turn_low  = { TR_IDLE, 0, 0, 0 };
 static turn_side_t turn_high = { TR_IDLE, 0, 0, 0 };
 
+/* 1 while the split turn indicator owns the frame (any mode/phase, including the
+ * ANIM_OFF flash and its off-phase). render_frame reads this to keep the front
+ * headlight dimmed for the whole indicator lifecycle, not just while the raw
+ * command bit is set. Updated every turn_render() call. */
+static int split_turn_owns = 0;
+
 /**
  * @brief Advance one half's blink lifecycle: fill out -> hold -> empty out ->
  *        hold -> (loop while active). When the request drops it finishes the
@@ -506,23 +547,47 @@ static int turn_render(int left_active, int right_active, int end_full) {
     int low_active  = REAR_TURN_SWAP_SIDES ? right_active : left_active;
     int high_active = REAR_TURN_SWAP_SIDES ? left_active  : right_active;
 
-    /* Animations off: light the requested half/halves solid (centre stays
-     * dark), nothing otherwise. */
+    /* Animations off: flash the requested half/halves on/off at TURN_FLASH_PPM
+     * (regs require the indicator to blink) and finish the current pulse after
+     * the request drops, so one command = one full blink. The blink's "off"
+     * phase leaves the base layer showing:
+     *   - front: the dimmed-white headlight (yellow -> dim white -> yellow ...),
+     *   - rear : black in the side (the side owns its region, blanking brake).
+     * The participating side(s) are latched at each pulse start so a command
+     * that drops mid-pulse still finishes lighting the same side(s). */
     if (ANIMATION_MODE == ANIM_OFF) {
-        if (!low_active && !high_active) { turn_low.state = TR_IDLE; turn_high.state = TR_IDLE; return 0; }
+        static int fstate = FL_IDLE; static uint32_t ft0 = 0;
+        static int lat_low = 0, lat_high = 0;
+        int any_active = low_active || high_active;
+        int prev = fstate;
+        int ph = flash_advance(&fstate, &ft0, any_active);
+        if (fstate == FL_ON && prev != FL_ON) { lat_low = low_active; lat_high = high_active; }
+        if (ph == FL_IDLE) {
+            turn_low.state = TR_IDLE; turn_high.state = TR_IDLE;
+            split_turn_owns = 0; return 0;
+        }
+        int on = (ph == FL_ON);
         for (int led = 0; led < TOTAL_LEDS; led++) {
             if (led < FIRST_ACTIVE) continue;
             int p = brake_phys_pos(led);
-            int lit = (low_active  && p <= TURN_BASE_LOW) ||
-                      (high_active && p >= TURN_HIGH_INNER);
-            if (lit) set_led(led, color);   /* overlay: paint lit slots only */
+            int in_low  = lat_low  && (p <= TURN_BASE_LOW);
+            int in_high = lat_high && (p >= TURN_HIGH_INNER);
+#if BOARD_ID == BOARD_REAR
+            /* Side owns its region: red when on, black when off (blanks brake). */
+            if (in_low || in_high) set_led(led, on ? color : 0);
+#else
+            /* Front: amber overlay only while on; the dimmed headlight base
+             * shows through during the off phase. */
+            if ((in_low || in_high) && on) set_led(led, color);
+#endif
         }
+        split_turn_owns = 1;
         return 1;
     }
 
     int owns_lo = turn_side_advance(&turn_low,  low_active,  TURN_LOW_MAX,  end_full);
     int owns_hi = turn_side_advance(&turn_high, high_active, TURN_HIGH_MAX, end_full);
-    if (!owns_lo && !owns_hi) return 0;
+    if (!owns_lo && !owns_hi) { split_turn_owns = 0; return 0; }
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
         if (led < FIRST_ACTIVE) continue;
@@ -541,6 +606,7 @@ static int turn_render(int left_active, int right_active, int end_full) {
         if (lit) set_led(led, color);   /* overlay on top of the base layer */
 #endif
     }
+    split_turn_owns = 1;
     return 1;
 }
 
@@ -648,7 +714,8 @@ void render_frame(void) {
      * bits, so it stays stable for the whole blink lifecycle and doesn't flip
      * dim<->full when the sender interleaves headlight-only and headlight+turn
      * frames. In ANIM_OFF there's no state machine, so fall back to the request. */
-    int turn_running = (turn_low.state != TR_IDLE) || (turn_high.state != TR_IDLE) ||
+    int turn_running = split_turn_owns ||
+                       (turn_low.state != TR_IDLE) || (turn_high.state != TR_IDLE) ||
                        ((ANIMATION_MODE == ANIM_OFF) && (left_active || right_active));
     /* Linger the dim briefly after the animation stops so the base layer doesn't
      * blip back to full right as the amber clears its last frame. */

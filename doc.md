@@ -231,8 +231,30 @@ RGBW channels (0-255 each), consumed by the pattern functions in `lighting.c`.
 
 ```c
 #define ANIMATION_MODE   1   // ANIM_ON  = sweep animations
-                         0   // ANIM_OFF = snap on/off, no sweep
+                         0   // ANIM_OFF = no sweep (turn indicator still blinks)
 ```
+
+In `ANIM_OFF` the turn indicator does not stay solid — it flashes on/off (regs
+require a blinking indicator). The rate is a knob:
+
+```c
+#define TURN_FLASH_PPM   90   // ANIM_OFF turn flash rate, pulses/min (regs 60-120)
+```
+
+The flash is **anchored to the request**, not a free-running wave: a fresh pulse
+starts when the turn goes active, and the current on+off pulse always completes
+after the request drops. So a single turn command renders exactly one clean full
+blink (e.g. front: `full white → yellow → dim white → full white`) instead of a
+brief partial flash. Held requests loop pulses. The participating side(s) are
+latched at each pulse start, so a command that drops mid-pulse still finishes
+lighting the same side(s).
+
+On the **front** board the flash reads as amber (on) alternating with the
+dimmed-white headlight (off), so chained pulses look like
+`full white → yellow → dim white → yellow → … → full white`. On the **rear**
+board each side blinks red↔black (blanking the brake). Full-strip-sweep boards
+(left/right/canopy) blink the whole strip amber↔off. `ANIM_ON` blinks via its
+sweep animation instead and ignores `TURN_FLASH_PPM`.
 
 ### Turn indicator geometry (rear/front split indicator)
 

@@ -138,6 +138,11 @@
 #define TURN_HOLD_MS            80   /* hold time at full / empty between phases  */
 #define BRAKE_STEP_MS           10   /* per-LED step for the brake-bar expansion  */
 
+/* ANIM_OFF turn-indicator flash rate, in pulses per minute (one pulse = one
+ * on+off cycle, 50% duty). Regs require 60-120 ppm; 90 is a good target. Only
+ * used when ANIMATION_MODE == ANIM_OFF (ANIM_ON blinks via its sweep instead). */
+#define TURN_FLASH_PPM          67
+
 /* ============================================================================
  *  PATTERN COLOURS  (R, G, B, W channels, each 0-255)
  * ============================================================================ */
