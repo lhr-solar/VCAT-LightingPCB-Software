@@ -63,6 +63,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
         if (cmd.headlights) last_headlight_tick = HAL_GetTick();
         if (cmd.left_indicator)  last_left_tick  = HAL_GetTick();
         if (cmd.right_indicator) last_right_tick = HAL_GetTick();
+        if (cmd.bps_strobe)      last_bps_strobe_tick = HAL_GetTick();
 
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
     }

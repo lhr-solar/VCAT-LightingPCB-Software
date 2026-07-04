@@ -29,6 +29,7 @@ extern volatile uint32_t        last_brake_tick; /* HAL_GetTick() of last frame 
 extern volatile uint32_t        last_headlight_tick; /* HAL_GetTick() of last frame with headlight set */
 extern volatile uint32_t        last_left_tick;  /* HAL_GetTick() of last frame with left indicator set */
 extern volatile uint32_t        last_right_tick; /* HAL_GetTick() of last frame with right indicator set */
+extern volatile uint32_t        last_bps_strobe_tick; /* HAL_GetTick() of last frame with bps_strobe set */
 extern volatile uint8_t         board_fault;     /* FAULT_* code reported on CAN  */
 
 /* WS2814 DMA buffer (one PWM duty value per colour bit). */

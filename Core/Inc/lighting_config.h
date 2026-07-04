@@ -84,6 +84,7 @@
 #define COMMAND_WATCHDOG_MS         500      /* blank LEDs if no command within  */
 #define STATUS_TX_PERIOD_MS         100      /* 10 Hz status                     */
 #define MAIN_LOOP_PERIOD_MS         1
+#define BPS_STROBE_HOLD_MS          1000     /* keep strobe on for 1 s after last msg */
 
 /* Hold brake active for this long after the last frame with the brake bit set.
  * Bridges brief dropouts from senders that interleave brake and turn frames. */

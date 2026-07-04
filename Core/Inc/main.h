@@ -62,11 +62,10 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
-/* External BPS strobe light: driven straight from a GPIO, independent of the
- * RGB strip. PA6 is the strip output (TIM16_CH1), so this defaults to PB4.
- * Update port/pin if the net maps differently on your spin. */
-#define BPS_STROBE_GPIO_Port  GPIOB
-#define BPS_STROBE_Pin        GPIO_PIN_4
+/* External BPS strobe light: driven straight from a GPIO, 
+ * independent of the RGB strip. */
+#define BPS_STROBE_GPIO_Port  GPIOA
+#define BPS_STROBE_Pin        GPIO_PIN_11
 
 /* USER CODE END Private defines */
 

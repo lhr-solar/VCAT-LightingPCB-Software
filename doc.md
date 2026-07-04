@@ -293,8 +293,7 @@ Higher in the list wins. Each board has a dedicated dispatch path compiled in vi
 Base layer: headlight (debounced) → custom mode → off. The headlight lights only
 the two turn-indicator end segments (dark centre) and **dims to
 `HEADLIGHT_TURN_DIM_W`** while a turn is animating. Amber split turn is overlaid
-on top (simultaneous headlight + turn). The BPS strobe is a separate GPIO fixture
-(see below), independent of the strip.
+on top (simultaneous headlight + turn). The BPS strobe pin is driven independently — see the strobe note under Pattern functions.
 
 **Rear:**
 Brake (red, grows from centre) as base layer. The split turn is **red** and
@@ -305,10 +304,10 @@ lit state so they merge seamlessly into the red brake instead of blipping (see
 `end_full` below). If neither owns the frame: headlight → custom mode → off.
 
 **Left / Right:**
-Turn indicator (full sweep). While not turning: BPS strobe if requested, else off. No headlight, no brake.
+Turn indicator (full sweep). While not turning: off. No headlight, no brake.
 
 **Canopy:**
-Brake → turn → BPS strobe → headlight → custom mode → off.
+Brake → turn → headlight → custom mode → off.
 
 ### Pattern functions
 
@@ -319,9 +318,7 @@ Brake → turn → BPS strobe → headlight → custom mode → off.
 | `pattern_headlight_front(turn_active)` | Front only: lights just the two turn-segment ends (dark centre); dims the white channel to `HEADLIGHT_TURN_DIM_W` when `turn_active` |
 | `pattern_custom_mode(mode)` | Modes 1-3 (currently placeholder → shows headlight colour; TODO) |
 
-The BPS strobe is **not** an LED pattern — `render_frame()` drives it directly as
-a GPIO (`BPS_STROBE_Pin`) whenever the strobe bit is set, independent of the RGB
-strip, so it can be active alongside any strip pattern.
+The BPS strobe is **not** an LED pattern and is not part of any board's strip priority. `render_frame()` writes `BPS_STROBE_Pin` directly from `cmd.bps_strobe` — it runs unconditionally before any strip logic, takes precedence over everything, and is completely independent of the watchdog and the RGB strip (separate connector).
 
 ### Animated state machines
 
@@ -379,7 +376,7 @@ config — no need to touch the pattern engine.
 |-----|----------|
 | PB11 | Toggled on CAN RX and every main loop iteration |
 | PA12 | General purpose output (currently unused) |
-| PB4 | BPS strobe external fixture GPIO (defined in `main.h`) |
+| PA11 | BPS strobe external fixture GPIO (defined in `main.h`) |
 
 ### Clock tree
 

@@ -19,6 +19,7 @@ volatile uint32_t        last_brake_tick = 0;
 volatile uint32_t        last_headlight_tick = 0;
 volatile uint32_t        last_left_tick  = 0;
 volatile uint32_t        last_right_tick = 0;
+volatile uint32_t        last_bps_strobe_tick = 0;
 volatile uint8_t         board_fault   = FAULT_OK;
 
 /* WS2814 DMA buffer (one PWM duty value per bit). */
@@ -633,10 +634,11 @@ void render_frame(void) {
     int watchdog = (HAL_GetTick() - last_cmd_tick) > COMMAND_WATCHDOG_MS;
     board_fault  = watchdog ? FAULT_LIGHT_CMD_WATCHDOG : FAULT_OK;
 
-    /* The BPS strobe is a separate external light - drive its GPIO independently
-     * of the strip so it can be active alongside any strip pattern. */
+    /* BPS strobe: high for BPS_STROBE_HOLD_MS after the last frame with the bit set. */
+    int bps_active = (last_bps_strobe_tick != 0) &&
+                     ((HAL_GetTick() - last_bps_strobe_tick) <= BPS_STROBE_HOLD_MS);
     HAL_GPIO_WritePin(BPS_STROBE_GPIO_Port, BPS_STROBE_Pin,
-                      (!watchdog && cmd.bps_strobe) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+                      bps_active ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
     /* Requests are only held while commands are arriving. On watchdog expiry they
      * drop, letting each animated effect play its out-animation rather than
