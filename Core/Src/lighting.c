@@ -685,9 +685,16 @@ void render_frame(void) {
                        (FRONT_SWAP_LR ? (cmd.left_indicator  || left_held)
                                       : (cmd.right_indicator || right_held));
 #else
+    /* Debounce the raw bits like the split path so the flash pulse anchors at the
+     * same instant on every board (interleaved turn-off frames won't re-anchor
+     * the side boards out of phase with the front). */
+    int left_held  = (last_left_tick  != 0) &&
+                     ((HAL_GetTick() - last_left_tick)  <= TURN_RELEASE_DEBOUNCE_MS);
+    int right_held = (last_right_tick != 0) &&
+                     ((HAL_GetTick() - last_right_tick) <= TURN_RELEASE_DEBOUNCE_MS);
     int turn_req  = (!watchdog) &&
-        ((RESPONDS_TO_LEFT  && cmd.left_indicator) ||
-         (RESPONDS_TO_RIGHT && cmd.right_indicator));
+        ((RESPONDS_TO_LEFT  && (cmd.left_indicator  || left_held)) ||
+         (RESPONDS_TO_RIGHT && (cmd.right_indicator || right_held)));
 #endif
 
     /* Priority / layering: strobe > headlight > custom > off for steady states.

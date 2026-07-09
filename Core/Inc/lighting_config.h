@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_REAR       /* <-- change per build target */
+  #define BOARD_ID      BOARD_FRONT       /* <-- change per build target, Animation toggle at bottom */
 #endif
 
 /* CAN IDs */
@@ -75,11 +75,11 @@
     #define MATTHEW_NUM_QUAD_CHIPS      3
 #elif BOARD_ID == BOARD_CANOPY
     #define MY_STATUS_ID            CAN_ID_STATUS_CANOPY
-    #define RESPONDS_TO_LEFT        1
-    #define RESPONDS_TO_RIGHT       1
+    #define RESPONDS_TO_LEFT        0
+    #define RESPONDS_TO_RIGHT       0
     #define HEADLIGHT_R             0
-    #define HEADLIGHT_W             255
-    #define MATTHEW_NUM_QUAD_CHIPS      3
+    #define HEADLIGHT_W             0
+    #define MATTHEW_NUM_QUAD_CHIPS      4
 #else
     #error "BOARD_ID must be one of BOARD_FRONT/LEFT/REAR/RIGHT/CANOPY"
 #endif
@@ -196,7 +196,7 @@
 #define ANIM_ON         1
 
 #ifndef ANIMATION_MODE
-  #define ANIMATION_MODE  0
+  #define ANIMATION_MODE  1
 #endif
 
 #endif /* LIGHTING_CONFIG_H */
