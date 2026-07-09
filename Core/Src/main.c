@@ -40,7 +40,14 @@ int main(void) {
             can_status_send();
         }
 
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
+        //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
+
+        /* Board heartbeat on PB11 - toggle every 500 ms. */
+        static uint32_t last_hbt_tick = 0;
+        if ((now - last_hbt_tick) >= 500) {
+            last_hbt_tick = now;
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+        }
 
         HAL_Delay(MAIN_LOOP_PERIOD_MS);
     }

@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_FRONT        /* <-- change per build target */
+  #define BOARD_ID      BOARD_REAR       /* <-- change per build target */
 #endif
 
 /* CAN IDs */
@@ -39,6 +39,8 @@
     #define MY_STATUS_ID            CAN_ID_STATUS_FRONT
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       1
+    /* Strip is mounted upside-down: swap left/right indicator bits. */
+    #define FRONT_SWAP_LR           1
     #define HEADLIGHT_R             0
     #define HEADLIGHT_W             255
     /* Headlight white level while a turn is animating (dims so amber stands out). */
@@ -53,11 +55,13 @@
     #define HEADLIGHT_R             0
     #define HEADLIGHT_W             0       /* side panel - no headlight by default */
     #define MATTHEW_NUM_QUAD_CHIPS      3
+    /* Left panel is mounted backwards, so sweep from the opposite end. */
+    #define TURN_SWEEP_REVERSE          1
 #elif BOARD_ID == BOARD_REAR
     #define MY_STATUS_ID            CAN_ID_STATUS_REAR
     #define RESPONDS_TO_LEFT        1
     #define RESPONDS_TO_RIGHT       1
-    #define HEADLIGHT_R             64     /* rear "headlight" = tail light, red */
+    #define HEADLIGHT_R             42     /* rear "headlight" = tail light, red */
     #define HEADLIGHT_W             0
     #define MATTHEW_NUM_QUAD_CHIPS      11
     /* Lit segments per side for the split turn indicator (matches brake-bar inner edges). */
@@ -75,7 +79,7 @@
     #define RESPONDS_TO_RIGHT       1
     #define HEADLIGHT_R             0
     #define HEADLIGHT_W             255
-    #define MATTHEW_NUM_QUAD_CHIPS      8
+    #define MATTHEW_NUM_QUAD_CHIPS      3
 #else
     #error "BOARD_ID must be one of BOARD_FRONT/LEFT/REAR/RIGHT/CANOPY"
 #endif
@@ -124,9 +128,14 @@
  *    All in milliseconds; lighting.c converts them to main-loop frames via
  *    MAIN_LOOP_PERIOD_MS, so changing MAIN_LOOP_PERIOD_MS rescales them.
  * ============================================================================ */
-#define TURN_STEP_MS            20   /* per-LED/segment step during fill & empty */
+#define TURN_STEP_MS            20   /* per-segment step for the split turn (front/rear) */
 #define TURN_HOLD_MS            80   /* hold time at full / empty between phases  */
 #define BRAKE_STEP_MS           10   /* per-LED step for the brake-bar expansion  */
+
+/* Full-strip sweep (left/right/canopy) fill/empty duration. Fixed wall-time so
+ * the blink cadence matches the front regardless of strip length, instead of
+ * scaling per-LED. 120 ms = the front's per-side fill (6 segments x TURN_STEP_MS). */
+#define TURN_SWEEP_MS           120
 
 /* ANIM_OFF turn flash rate (pulses/min, 50% duty). Regs require 60-120 ppm. Only
  * used when ANIMATION_MODE == ANIM_OFF. */
@@ -135,9 +144,10 @@
 /* ============================================================================
  *  PATTERN COLOURS  (R, G, B, W channels, each 0-255)
  * ============================================================================ */
-/* Full-strip sweep turn indicator (left / right / canopy) - amber. */
+/* Full-strip sweep turn indicator (left / right / canopy) - amber.
+ * Matches the front split-turn amber (TURN_FRONT_*) so all boards read the same. */
 #define TURN_SWEEP_R            255
-#define TURN_SWEEP_G            100
+#define TURN_SWEEP_G            64
 #define TURN_SWEEP_B            0
 #define TURN_SWEEP_W            0
 /* Front split turn indicator, overlaid on the headlight - amber. */
@@ -164,6 +174,15 @@
 #define BRAKE_STRIP_FOLDED      1
 /* Set to 1 if the rear bar's left/right halves come out physically reversed. */
 #define REAR_TURN_SWAP_SIDES    0
+/* Set to 1 if the front strip is mounted upside-down (swaps left/right indicators). */
+#ifndef FRONT_SWAP_LR
+  #define FRONT_SWAP_LR         0
+#endif
+/* Full-strip sweep boards (left/right): reverse the fill/empty direction for a
+ * panel that's physically mounted backwards, so both sides sweep the same way. */
+#ifndef TURN_SWEEP_REVERSE
+  #define TURN_SWEEP_REVERSE    0
+#endif
 /* TURN_SEGMENTS_PER_SIDE is set per board above (front/rear); other boards fall
  * back to a default in lighting.c since they use the full-strip sweep. */
 
@@ -177,7 +196,7 @@
 #define ANIM_ON         1
 
 #ifndef ANIMATION_MODE
-  #define ANIMATION_MODE  1
+  #define ANIMATION_MODE  0
 #endif
 
 #endif /* LIGHTING_CONFIG_H */

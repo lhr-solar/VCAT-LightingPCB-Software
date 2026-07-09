@@ -169,7 +169,10 @@ static int turn_frame      = 0;
 
 static int turn_step(int active) {
     #define ACTIVE_LEDS         (TOTAL_LEDS - FIRST_ACTIVE)
-    #define TURN_FRAMES_PER_LED (TURN_STEP_MS / MAIN_LOOP_PERIOD_MS)
+    /* Fill/empty each run over exactly TURN_SWEEP_FRAMES, driving the sweep
+     * position from elapsed time (not a truncating per-LED step) so the total
+     * duration is exact and the cadence matches the front with no drift. */
+    #define TURN_SWEEP_FRAMES   (TURN_SWEEP_MS / MAIN_LOOP_PERIOD_MS)
     #define TURN_HOLD_FRAMES    (TURN_HOLD_MS / MAIN_LOOP_PERIOD_MS)
 
     const uint32_t color = pack_rgbw(TURN_SWEEP_R, TURN_SWEEP_G, TURN_SWEEP_B, TURN_SWEEP_W);
@@ -197,18 +200,18 @@ static int turn_step(int active) {
             }
             break;
         case TN_FILLING:
-            if (turn_frame >= TURN_FRAMES_PER_LED) {
-                turn_frame = 0;
-                if (++turn_fill_pos >= ACTIVE_LEDS) { turn_fill_pos = ACTIVE_LEDS; turn_state = TN_HOLD_FULL; }
+            turn_fill_pos = (turn_frame * ACTIVE_LEDS) / TURN_SWEEP_FRAMES;
+            if (turn_frame >= TURN_SWEEP_FRAMES) {
+                turn_fill_pos = ACTIVE_LEDS; turn_frame = 0; turn_state = TN_HOLD_FULL;
             }
             break;
         case TN_HOLD_FULL:
             if (turn_frame >= TURN_HOLD_FRAMES) { turn_frame = 0; turn_empty_pos = 0; turn_state = TN_EMPTYING; }
             break;
         case TN_EMPTYING:
-            if (turn_frame >= TURN_FRAMES_PER_LED) {
-                turn_frame = 0;
-                if (++turn_empty_pos >= ACTIVE_LEDS) { turn_empty_pos = ACTIVE_LEDS; turn_state = TN_HOLD_EMPTY; }
+            turn_empty_pos = (turn_frame * ACTIVE_LEDS) / TURN_SWEEP_FRAMES;
+            if (turn_frame >= TURN_SWEEP_FRAMES) {
+                turn_empty_pos = ACTIVE_LEDS; turn_frame = 0; turn_state = TN_HOLD_EMPTY;
             }
             break;
         case TN_HOLD_EMPTY:
@@ -226,7 +229,9 @@ static int turn_step(int active) {
 
     for (int led = 0; led < TOTAL_LEDS; led++) {
         uint32_t led_color = 0;
-        int active_idx = led - FIRST_ACTIVE;
+        /* Reversed boards sweep from the far end: measure the index from the
+         * opposite side so the same fill/empty logic runs the other direction. */
+        int active_idx = TURN_SWEEP_REVERSE ? (TOTAL_LEDS - 1 - led) : (led - FIRST_ACTIVE);
         if      (led < FIRST_ACTIVE)         led_color = 0;
         else if (turn_state == TN_FILLING)   led_color = (active_idx < turn_fill_pos)  ? color : 0;
         else if (turn_state == TN_HOLD_FULL) led_color = color;
@@ -554,8 +559,8 @@ static int turn_render(int left_active, int right_active, int end_full) {
             int in_low  = lat_low  && (p <= TURN_BASE_LOW);
             int in_high = lat_high && (p >= TURN_HIGH_INNER);
 #if BOARD_ID == BOARD_REAR
-            /* Side owns its region: red when on, black when off (blanks brake). */
-            if (in_low || in_high) set_led(led, on ? color : 0);
+            /* Overlay: write color when on, leave base layer when off. */
+            if ((in_low || in_high) && on) set_led(led, color);
 #else
             /* Front: amber overlay only while on; the dimmed headlight base
              * shows through during the off phase. */
@@ -574,13 +579,11 @@ static int turn_render(int left_active, int right_active, int end_full) {
         if (led < FIRST_ACTIVE) continue;
         int p = brake_phys_pos(led);
 #if BOARD_ID == BOARD_REAR
-        /* While a side is animating it takes over its whole region: red where
-         * the sweep is lit, black otherwise (overrides the brake base). Idle
-         * sides are left untouched so the brake red still shows there. */
-        if      (owns_lo && p <= TURN_BASE_LOW)
-            set_led(led, turn_side_lit(&turn_low,  TURN_BASE_LOW - p) ? color : 0);
-        else if (owns_hi && p >= TURN_HIGH_INNER)
-            set_led(led, turn_side_lit(&turn_high, p - TURN_BASE_HIGH) ? color : 0);
+        /* Overlay: only write slots that are lit; unlit slots keep the base layer. */
+        if (owns_lo && p <= TURN_BASE_LOW && turn_side_lit(&turn_low,  TURN_BASE_LOW - p))
+            set_led(led, color);
+        else if (owns_hi && p >= TURN_HIGH_INNER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH))
+            set_led(led, color);
 #else
         int lit = (owns_lo && p <= TURN_BASE_LOW  && turn_side_lit(&turn_low,  TURN_BASE_LOW - p)) ||
                   (owns_hi && p >= TURN_HIGH_INNER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH));
@@ -593,17 +596,32 @@ static int turn_render(int left_active, int right_active, int end_full) {
 
 #if BOARD_ID == BOARD_FRONT
 /**
- * @brief Front headlight base layer. Regs don't allow the middle section lit,
- *        so instead of the full strip this lights only the two end segments -
- *        the exact same slots the turn indicators occupy - leaving the centre
- *        gap dark, whether or not an indicator is active.
- *
- *        `turn_active` dims the white channel (to HEADLIGHT_TURN_DIM_W) while a
- *        turn indicator is blinking so the amber overlay stands out.
+ * @brief Front headlight base layer. Lights only the two end segments —
+ *        the same slots the turn indicators occupy — leaving the centre dark.
+ *        `turn_active` dims the white channel to HEADLIGHT_TURN_DIM_W while
+ *        a turn is blinking so the amber overlay stands out.
  */
 static void pattern_headlight_front(int turn_active) {
     uint8_t w = turn_active ? HEADLIGHT_TURN_DIM_W : HEADLIGHT_W;
     const uint32_t color = pack_rgbw(HEADLIGHT_R, 0, 0, w);
+    for (int led = 0; led < TOTAL_LEDS; led++) {
+        int p = brake_phys_pos(led);
+        int lit = (led >= FIRST_ACTIVE) &&
+                  (p <= TURN_BASE_LOW || p >= TURN_HIGH_INNER);
+        set_led(led, lit ? color : 0);
+    }
+}
+#endif
+
+#if BOARD_ID == BOARD_REAR
+/**
+ * @brief Rear tail-light base layer. Mirrors the front: lights only the two
+ *        end segments (same slots as the turn indicators), leaving the centre
+ *        dark. No dimming needed — the turn overlay is red-on-red and owns its
+ *        region completely while animating.
+ */
+static void pattern_headlight_rear(void) {
+    const uint32_t color = pack_rgbw(HEADLIGHT_R, 0, 0, HEADLIGHT_W);
     for (int led = 0; led < TOTAL_LEDS; led++) {
         int p = brake_phys_pos(led);
         int lit = (led >= FIRST_ACTIVE) &&
@@ -647,7 +665,8 @@ void render_frame(void) {
     int brake_held = (last_brake_tick != 0) &&
                      ((HAL_GetTick() - last_brake_tick) <= BRAKE_RELEASE_DEBOUNCE_MS);
     int brake_req  = (!watchdog) && (cmd.brake || brake_held);
-#elif BOARD_ID == BOARD_FRONT
+#endif
+#if SPLIT_TURN_INDICATOR
     int headlight_held = (last_headlight_tick != 0) &&
                          ((HAL_GetTick() - last_headlight_tick) <= HEADLIGHT_RELEASE_DEBOUNCE_MS);
     int headlight_req  = (!watchdog) && (cmd.headlights || headlight_held);
@@ -658,8 +677,13 @@ void render_frame(void) {
                      ((HAL_GetTick() - last_left_tick)  <= TURN_RELEASE_DEBOUNCE_MS);
     int right_held = (last_right_tick != 0) &&
                      ((HAL_GetTick() - last_right_tick) <= TURN_RELEASE_DEBOUNCE_MS);
-    int left_active  = (!watchdog) && RESPONDS_TO_LEFT  && (cmd.left_indicator  || left_held);
-    int right_active = (!watchdog) && RESPONDS_TO_RIGHT && (cmd.right_indicator || right_held);
+    /* FRONT_SWAP_LR: strip is upside-down, swap which side each bit drives. */
+    int left_active  = (!watchdog) && RESPONDS_TO_LEFT  &&
+                       (FRONT_SWAP_LR ? (cmd.right_indicator || right_held)
+                                      : (cmd.left_indicator  || left_held));
+    int right_active = (!watchdog) && RESPONDS_TO_RIGHT &&
+                       (FRONT_SWAP_LR ? (cmd.left_indicator  || left_held)
+                                      : (cmd.right_indicator || right_held));
 #else
     int turn_req  = (!watchdog) &&
         ((RESPONDS_TO_LEFT  && cmd.left_indicator) ||
@@ -670,13 +694,20 @@ void render_frame(void) {
      * brake_step()/turn handlers are advanced every tick so their out-animations
      * keep running even after the request drops. */
 #if BOARD_ID == BOARD_REAR
-    /* Rear: brake (red) is the base layer; turn (amber) overlays on top.
-     * Both state machines advance every tick for smooth out-animations. */
-    int brake_owns = brake_step(brake_req);
-    if (!brake_owns) pattern_off();
+    /* Rear: tail-light is the base layer; brake overlays on top, turn on top of that.
+     * All three advance every tick so their out-animations run smoothly. */
+    if (!watchdog) {
+        if      (headlight_req)        pattern_headlight_rear();
+        else if (cmd.custom_mode != 0) pattern_custom_mode(cmd.custom_mode);
+        else                           pattern_off();
+    } else {
+        pattern_off();
+    }
+    brake_step(brake_req);
     /* While braking, end the turn's final blink lit so it merges into the brake base. */
-    int turn_owns  = turn_render(left_active, right_active, brake_req);
-    if (brake_owns || turn_owns) { commit_frame(255); return; }
+    turn_render(left_active, right_active, brake_req);
+    commit_frame(255);
+    return;
 #elif BOARD_ID == BOARD_FRONT
     /* Front: steady pattern is the base layer; amber turn overlays on top. */
     /* Dim the headlight while the turn indicator is animating. Keyed off the

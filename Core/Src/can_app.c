@@ -65,7 +65,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
         if (cmd.right_indicator) last_right_tick = HAL_GetTick();
         if (cmd.bps_strobe)      last_bps_strobe_tick = HAL_GetTick();
 
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11); /* heartbeat */
+        static uint8_t rx_count = 0;
+        if (++rx_count >= 5) { rx_count = 0; HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_8); }
     }
 }
 
@@ -119,4 +120,5 @@ void can_status_send(void) {
 
     uint32_t mailbox;
     HAL_CAN_AddTxMessage(&hcan1, &tx_header, data, &mailbox);
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
 }

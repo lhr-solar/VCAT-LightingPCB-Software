@@ -148,8 +148,8 @@ This is the main knobs file. **Change `BOARD_ID` before flashing each board.**
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `BOARD_FRONT` | 0 | White headlight lit only on the two turn-indicator end segments (dark centre), amber split turn overlaid on top, headlight dims while turning, no brake |
-| `BOARD_LEFT` | 1 | Left turn only, no headlight colour, no brake |
-| `BOARD_REAR` | 2 | Red tail light, **red** split turn that owns its side (blinks red↔black, blanking the brake underneath), brake engine |
+| `BOARD_LEFT` | 1 | Left turn only, no headlight colour, no brake, sweep reversed (`TURN_SWEEP_REVERSE`, mounted backwards) |
+| `BOARD_REAR` | 2 | Dim red tail-light on end segments only (same slots as the turn indicators, dark centre), **red** split turn that owns its side (blinks red↔black, blanking the brake underneath), brake engine |
 | `BOARD_RIGHT` | 3 | Right turn only, no headlight colour, no brake |
 | `BOARD_CANOPY` | 4 | White headlight, full-strip turn sweep, brake engine |
 
@@ -207,10 +207,18 @@ All in milliseconds; `lighting.c` converts them to main-loop frames via
 `MAIN_LOOP_PERIOD_MS`, so changing the loop period rescales them automatically.
 
 ```c
-#define TURN_STEP_MS    20   // per-LED/segment step during fill & empty
+#define TURN_STEP_MS    20   // per-segment step for the split turn (front/rear)
 #define TURN_HOLD_MS    80   // hold time at full / empty between phases
 #define BRAKE_STEP_MS   10   // per-LED step for the brake-bar expansion
+#define TURN_SWEEP_MS   120  // full-strip sweep (left/right/canopy) fill/empty duration
 ```
+
+The split turn (front/rear) steps per segment at `TURN_STEP_MS`. The full-strip
+sweep (left/right/canopy) instead drives its fill/empty position from elapsed
+time so each run lasts *exactly* `TURN_SWEEP_MS` regardless of strip length. With
+`TURN_SWEEP_MS` = the front's per-side fill time (6 × `TURN_STEP_MS` = 120 ms),
+both indicators run an identical 400 ms cycle (120 fill + 80 hold + 120 empty +
+80 hold), so they stay phase-locked with no drift.
 
 ### Pattern colours
 
@@ -272,6 +280,18 @@ Increasing this number extends how far the indicator sweeps in from each end. Th
                                    // physically wired in reverse
 ```
 
+For the full-strip sweep boards (left/right), `TURN_SWEEP_REVERSE` flips the
+fill/empty direction for a panel mounted backwards, so both sides sweep the same
+way physically. It defaults to `0` and is set to `1` on the left board.
+
+```c
+#define TURN_SWEEP_REVERSE     1   // left panel is mounted backwards
+```
+
+Left and right share the same `TURN_SWEEP_*` colours and `TURN_STEP_MS`/
+`TURN_HOLD_MS` timing (none are board-specific), so the two sides stay colour- and
+timing-matched; the reverse flag only changes direction, not rate.
+
 ### Brake strip geometry
 
 ```c
@@ -296,12 +316,13 @@ the two turn-indicator end segments (dark centre) and **dims to
 on top (simultaneous headlight + turn). The BPS strobe pin is driven independently — see the strobe note under Pattern functions.
 
 **Rear:**
-Brake (red, grows from centre) as base layer. The split turn is **red** and
-*owns* its side while animating: it blinks red↔black over its segments, blanking
-the brake underneath, so between blinks that side goes dark while the rest of the
-bar stays red. While braking, the turn's first and last blinks are forced to the
-lit state so they merge seamlessly into the red brake instead of blipping (see
-`end_full` below). If neither owns the frame: headlight → custom mode → off.
+Tail-light (dim red, end segments only) as base layer. Brake (red, grows from centre)
+overlays on top. The split turn is **red** and *owns* its side while animating: it
+blinks red↔black over its segments, blanking the brake underneath, so between blinks
+that side goes dark while the rest of the bar stays red. While braking, the turn's
+first and last blinks are forced to the lit state so they merge seamlessly into the
+red brake instead of blipping (see `end_full` below). Off → custom mode → off when
+no headlights.
 
 **Left / Right:**
 Turn indicator (full sweep). While not turning: off. No headlight, no brake.
@@ -374,7 +395,9 @@ config — no need to touch the pattern engine.
 
 | Pin | Function |
 |-----|----------|
-| PB11 | Toggled on CAN RX and every main loop iteration |
+| PB11 | Board heartbeat — toggles at 1 Hz (every 500 ms) |
+| PA8  | CAN RX heartbeat — toggles every 5 received frames |
+| PA15 | CAN TX heartbeat — toggles on every status TX |
 | PA12 | General purpose output (currently unused) |
 | PA11 | BPS strobe external fixture GPIO (defined in `main.h`) |
 
