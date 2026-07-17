@@ -23,7 +23,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_FRONT       /* <-- change per build target, Animation toggle at bottom */
+  #define BOARD_ID      BOARD_REAR       /* <-- change per build target, Animation toggle at bottom */
 #endif
 
 /* CAN IDs */
@@ -66,6 +66,10 @@
     #define MATTHEW_NUM_QUAD_CHIPS      11
     /* Lit segments per side for the split turn indicator (matches brake-bar inner edges). */
     #define TURN_SEGMENTS_PER_SIDE      7
+    /* A physical segment was cut off the far (fold) end of the rear bar. Pull the
+     * high-side brake/indicator region in by this many slots so the pattern stays
+     * aligned to real LEDs, instead of shortening the strip via MATTHEW_NUM_QUAD_CHIPS. */
+    #define REAR_END_SHIFT              1
 #elif BOARD_ID == BOARD_RIGHT
     #define MY_STATUS_ID            CAN_ID_STATUS_RIGHT
     #define RESPONDS_TO_LEFT        0

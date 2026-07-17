@@ -295,13 +295,21 @@ static int turn_step(int active) {
   #define TURN_SEGMENTS_PER_SIDE 7
 #endif
 
+/* If a segment was cut off the far (high/fold) end, pull that side's region in by
+ * this many slots. Defaults to 0 (no cut) for boards that don't set it. */
+#ifndef REAR_END_SHIFT
+  #define REAR_END_SHIFT 0
+#endif
+
 /* Low half lit slots [0 .. TURN_BASE_LOW]; high half lit slots
- * [TURN_HIGH_INNER .. BRAKE_SPAN-1]. The strip's first LED (index 0, blanked by
- * FIRST_ACTIVE) sits at the low half's far end, so that half is physically one
+ * [TURN_HIGH_INNER .. TURN_HIGH_OUTER]. The strip's first LED (index 0, blanked
+ * by FIRST_ACTIVE) sits at the low half's far end, so that half is physically one
  * segment short; the high half drops its innermost slot (TURN_HIGH_INNER) to
- * match, so both sides show the same number of lit segments. */
+ * match, so both sides show the same number of lit segments. REAR_END_SHIFT
+ * moves the whole high region in (both edges) to skip a cut far-end segment. */
 #define TURN_BASE_LOW    (TURN_SEGMENTS_PER_SIDE - 1)
-#define TURN_BASE_HIGH   (BRAKE_SPAN - TURN_SEGMENTS_PER_SIDE)
+#define TURN_HIGH_OUTER  (BRAKE_SPAN - 1 - REAR_END_SHIFT)
+#define TURN_BASE_HIGH   (BRAKE_SPAN - TURN_SEGMENTS_PER_SIDE - REAR_END_SHIFT)
 #define TURN_HIGH_INNER  (TURN_BASE_HIGH + 1)
 
 /* Slots each turn half animates over (kept equal so both sweep in lockstep). */
@@ -319,10 +327,11 @@ static int turn_step(int active) {
   #define BRAKE_BASE_HIGH  BRAKE_CENTER_POS
 #endif
 
-/* Radius needed for the farther side to reach its end. */
+/* Radius needed for the farther side to reach its end (high side capped at the
+ * possibly-shifted TURN_HIGH_OUTER). */
 #define BRAKE_MAX_RADIUS \
-    (((BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) > BRAKE_BASE_LOW) \
-        ? (BRAKE_SPAN - 1 - BRAKE_BASE_HIGH) \
+    (((TURN_HIGH_OUTER - BRAKE_BASE_HIGH) > BRAKE_BASE_LOW) \
+        ? (TURN_HIGH_OUTER - BRAKE_BASE_HIGH) \
         : BRAKE_BASE_LOW)
 
 /* Only boards with a brake light (rear, canopy) compile the brake engine. */
@@ -348,7 +357,8 @@ static int brake_step(int active) {
         for (int led = 0; led < TOTAL_LEDS; led++) {
             int p = brake_phys_pos(led);
             int lit = (led >= FIRST_ACTIVE) &&
-                      (p <= BRAKE_BASE_LOW || p >= BRAKE_BASE_HIGH);
+                      (p <= BRAKE_BASE_LOW ||
+                       (p >= BRAKE_BASE_HIGH && p <= TURN_HIGH_OUTER));
             set_led(led, lit ? color : 0);
         }
         return 1;
@@ -395,11 +405,11 @@ static int brake_step(int active) {
             led_color = 0;
         } else if (brake_state == BR_HOLD) {
             /* Solid, but the centre gap stays dark. */
-            if (p <= BRAKE_BASE_LOW || p >= BRAKE_BASE_HIGH) led_color = color;
+            if (p <= BRAKE_BASE_LOW || (p >= BRAKE_BASE_HIGH && p <= TURN_HIGH_OUTER)) led_color = color;
         } else {
             /* Filling / emptying: two fronts expanding outward from the gap. */
             if (p <= BRAKE_BASE_LOW  && p >= lo) led_color = color;
-            if (p >= BRAKE_BASE_HIGH && p <= hi) led_color = color;
+            if (p >= BRAKE_BASE_HIGH && p <= hi && p <= TURN_HIGH_OUTER) led_color = color;
         }
         set_led(led, led_color);
     }
@@ -557,7 +567,7 @@ static int turn_render(int left_active, int right_active, int end_full) {
             if (led < FIRST_ACTIVE) continue;
             int p = brake_phys_pos(led);
             int in_low  = lat_low  && (p <= TURN_BASE_LOW);
-            int in_high = lat_high && (p >= TURN_HIGH_INNER);
+            int in_high = lat_high && (p >= TURN_HIGH_INNER) && (p <= TURN_HIGH_OUTER);
 #if BOARD_ID == BOARD_REAR
             /* Overlay: write color when on, leave base layer when off. */
             if ((in_low || in_high) && on) set_led(led, color);
@@ -582,7 +592,7 @@ static int turn_render(int left_active, int right_active, int end_full) {
         /* Overlay: only write slots that are lit; unlit slots keep the base layer. */
         if (owns_lo && p <= TURN_BASE_LOW && turn_side_lit(&turn_low,  TURN_BASE_LOW - p))
             set_led(led, color);
-        else if (owns_hi && p >= TURN_HIGH_INNER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH))
+        else if (owns_hi && p >= TURN_HIGH_INNER && p <= TURN_HIGH_OUTER && turn_side_lit(&turn_high, p - TURN_BASE_HIGH))
             set_led(led, color);
 #else
         int lit = (owns_lo && p <= TURN_BASE_LOW  && turn_side_lit(&turn_low,  TURN_BASE_LOW - p)) ||
@@ -625,7 +635,8 @@ static void pattern_headlight_rear(void) {
     for (int led = 0; led < TOTAL_LEDS; led++) {
         int p = brake_phys_pos(led);
         int lit = (led >= FIRST_ACTIVE) &&
-                  (p <= TURN_BASE_LOW || p >= TURN_HIGH_INNER);
+                  (p <= TURN_BASE_LOW ||
+                   (p >= TURN_HIGH_INNER && p <= TURN_HIGH_OUTER));
         set_led(led, lit ? color : 0);
     }
 }
