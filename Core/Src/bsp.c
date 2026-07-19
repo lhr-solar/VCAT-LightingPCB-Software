@@ -1,10 +1,11 @@
 /**
  ******************************************************************************
  * @file    bsp.c
- * @brief   Board support - clock/peripheral init, strip DMA output, ISR glue.
+ * @brief   Board support - clock/peripheral init and ISR glue.
  *
  * HAL init code mirrors STM32CubeMX output; keep in sync if the .ioc is
- * regenerated.
+ * regenerated. The lights are now plain GPIO outputs (see lighting.c), so the
+ * WS281x TIM16/DMA strip output has been removed.
  ******************************************************************************
  */
 #include "bsp.h"
@@ -13,17 +14,11 @@
  *  Peripheral handles
  * ============================================================================ */
 CAN_HandleTypeDef  hcan1;
-TIM_HandleTypeDef  htim16;
-DMA_HandleTypeDef  hdma_tim16_ch1_up;
 UART_HandleTypeDef huart1;
 
-/* From stm32l4xx_hal_msp.c */
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
-
 /* Forward declarations for the CubeMX-style init helpers. */
+void        SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
-static void MX_TIM16_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_USART1_UART_Init(void);
 
@@ -35,24 +30,8 @@ void bsp_init(void) {
     SystemClock_Config();
 
     MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_TIM16_Init();
     MX_CAN1_Init();
     MX_USART1_UART_Init();
-}
-
-void bsp_strip_show(const uint32_t *buf, uint16_t len) {
-    __HAL_TIM_SET_COUNTER(&htim16, 0);
-    HAL_TIM_PWM_Start_DMA(&htim16, TIM_CHANNEL_1, (uint32_t *)buf, len);
-}
-
-/* ============================================================================
- *  PWM/DMA callback - stop the one-shot transfer when the frame is sent.
- * ============================================================================ */
-void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM16) {
-        HAL_TIM_PWM_Stop_DMA(&htim16, TIM_CHANNEL_1);
-    }
 }
 
 /* ============================================================================
@@ -101,41 +80,6 @@ static void MX_CAN1_Init(void) {
     if (HAL_CAN_Init(&hcan1) != HAL_OK) Error_Handler();
 }
 
-static void MX_TIM16_Init(void) {
-    TIM_OC_InitTypeDef oc = {0};
-    TIM_BreakDeadTimeConfigTypeDef bdt = {0};
-
-    htim16.Instance                = TIM16;
-    htim16.Init.Prescaler          = 0;
-    htim16.Init.CounterMode        = TIM_COUNTERMODE_UP;
-    htim16.Init.Period             = 50;
-    htim16.Init.ClockDivision      = TIM_CLOCKDIVISION_DIV1;
-    htim16.Init.RepetitionCounter  = 0;
-    htim16.Init.AutoReloadPreload  = TIM_AUTORELOAD_PRELOAD_DISABLE;
-    if (HAL_TIM_Base_Init(&htim16) != HAL_OK) Error_Handler();
-    if (HAL_TIM_PWM_Init(&htim16) != HAL_OK)  Error_Handler();
-
-    oc.OCMode       = TIM_OCMODE_PWM1;
-    oc.Pulse        = 25;
-    oc.OCPolarity   = TIM_OCPOLARITY_HIGH;
-    oc.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
-    oc.OCFastMode   = TIM_OCFAST_DISABLE;
-    oc.OCIdleState  = TIM_OCIDLESTATE_RESET;
-    oc.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-    if (HAL_TIM_PWM_ConfigChannel(&htim16, &oc, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-
-    bdt.OffStateRunMode  = TIM_OSSR_DISABLE;
-    bdt.OffStateIDLEMode = TIM_OSSI_DISABLE;
-    bdt.LockLevel        = TIM_LOCKLEVEL_OFF;
-    bdt.DeadTime         = 0;
-    bdt.BreakState       = TIM_BREAK_DISABLE;
-    bdt.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
-    bdt.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
-    if (HAL_TIMEx_ConfigBreakDeadTime(&htim16, &bdt) != HAL_OK) Error_Handler();
-
-    HAL_TIM_MspPostInit(&htim16);
-}
-
 static void MX_USART1_UART_Init(void) {
     huart1.Instance                    = USART1;
     huart1.Init.BaudRate               = 115200;
@@ -150,36 +94,33 @@ static void MX_USART1_UART_Init(void) {
     if (HAL_UART_Init(&huart1) != HAL_OK) Error_Handler();
 }
 
-static void MX_DMA_Init(void) {
-    __HAL_RCC_DMA1_CLK_ENABLE();
-    HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-}
-
 static void MX_GPIO_Init(void) {
     GPIO_InitTypeDef g = {0};
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8,  GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BPS_STROBE_GPIO_Port, BPS_STROBE_Pin, GPIO_PIN_RESET);
+    /* Default all outputs low. */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);            /* heartbeat        */
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8,  GPIO_PIN_RESET);            /* CAN RX heartbeat */
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);            /* CAN TX heartbeat */
+    HAL_GPIO_WritePin(LIGHT_CH1_GPIO_Port, LIGHT_CH1_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LIGHT_CH2_GPIO_Port, LIGHT_CH2_Pin, GPIO_PIN_RESET);
 
+    /* Board heartbeat on PB11. */
     g.Pin   = GPIO_PIN_11;
     g.Mode  = GPIO_MODE_OUTPUT_PP;
     g.Pull  = GPIO_NOPULL;
     g.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOB, &g);
 
-    g.Pin = GPIO_PIN_12 | GPIO_PIN_8 | GPIO_PIN_15;
+    /* CAN RX / TX heartbeats on PA8 / PA15. */
+    g.Pin = GPIO_PIN_8 | GPIO_PIN_15;
     HAL_GPIO_Init(GPIOA, &g);
 
-    /* External BPS strobe light enable (see BPS_STROBE_* in main.h). */
-    g.Pin = BPS_STROBE_Pin;
-    HAL_GPIO_Init(BPS_STROBE_GPIO_Port, &g);
+    /* Light output channels CH1 (PA11) / CH2 (PA12), both on GPIOA. */
+    g.Pin = LIGHT_CH1_Pin | LIGHT_CH2_Pin;
+    HAL_GPIO_Init(GPIOA, &g);
 }
 
 void Error_Handler(void) {

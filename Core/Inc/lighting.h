@@ -32,13 +32,10 @@ extern volatile uint32_t        last_right_tick; /* HAL_GetTick() of last frame 
 extern volatile uint32_t        last_bps_strobe_tick; /* HAL_GetTick() of last frame with bps_strobe set */
 extern volatile uint8_t         board_fault;     /* FAULT_* code reported on CAN  */
 
-/* WS2814 DMA buffer (one PWM duty value per colour bit). */
-extern uint32_t led_pattern[NUM_STEPS];
-
 /**
- * @brief Render one animation frame into led_pattern based on the current
- *        command, board side and the command watchdog. Call once per
- *        MAIN_LOOP_PERIOD_MS tick.
+ * @brief Evaluate the current command against this board's channel functions
+ *        and drive the two output channels (on/off + turn blink). Also drives
+ *        the command watchdog. Call once per MAIN_LOOP_PERIOD_MS tick.
  */
 void render_frame(void);
 

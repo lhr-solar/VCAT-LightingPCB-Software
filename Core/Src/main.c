@@ -4,10 +4,10 @@
   * @file           : main.c
   * @brief          : Lighting controller entry point.
   *
-  * Wires together the board support (bsp), the LED pattern engine (lighting)
+  * Wires together the board support (bsp), the GPIO light driver (lighting)
   * and the application CAN layer (can_app):
-  *   - bsp.c / bsp.h            : clocks, peripherals, WS2814 strip DMA output
-  *   - lighting.c / lighting.h  : patterns + per-frame render into led_pattern
+  *   - bsp.c / bsp.h            : clocks, peripherals (CAN, UART, GPIO)
+  *   - lighting.c / lighting.h  : evaluates the command, drives the two channels
   *   - can_app.c / can_app.h    : Lighting_Command RX, Lighting_*_Status TX
   *   - lighting_config.h        : board selection and all compile-time config
   ******************************************************************************
@@ -30,9 +30,8 @@ int main(void) {
     while (1) {
         uint32_t now = HAL_GetTick();
 
-        /* Paint a frame and push it out to the strip. */
+        /* Evaluate the command and drive the two GPIO light channels. */
         render_frame();
-        bsp_strip_show(led_pattern, NUM_STEPS);
 
         /* Broadcast status at the configured cadence. */
         if ((now - last_status_tick) >= STATUS_TX_PERIOD_MS) {

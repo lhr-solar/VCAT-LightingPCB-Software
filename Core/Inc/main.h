@@ -49,8 +49,6 @@ extern "C" {
 
 /* USER CODE END EM */
 
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
-
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -62,10 +60,12 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
-/* External BPS strobe light: driven straight from a GPIO, 
- * independent of the RGB strip. */
-#define BPS_STROBE_GPIO_Port  GPIOA
-#define BPS_STROBE_Pin        GPIO_PIN_11
+/* The two FET-driven light output channels. Both active-high. What each channel
+ * drives is set per board in lighting_config.h (CH1_FUNC / CH2_FUNC). */
+#define LIGHT_CH1_GPIO_Port   GPIOA
+#define LIGHT_CH1_Pin         GPIO_PIN_11
+#define LIGHT_CH2_GPIO_Port   GPIOA
+#define LIGHT_CH2_Pin         GPIO_PIN_12
 
 /* USER CODE END Private defines */
 

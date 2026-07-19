@@ -1,29 +1,46 @@
 /**
  ******************************************************************************
  * @file    lighting_config.h
- * @brief   Compile-time configuration for the lighting firmware.
+ * @brief   Compile-time config: board select, channel functions, timing.
  *
- * Board selection and all per-board constants, CAN IDs, fault codes, LED frame
- * geometry, loop timing and the animation mode switch live here so every module
- * shares one source of truth. Pure macros - safe to include anywhere.
+ * Lights are plain on/off fixtures on two active-high FET GPIO channels per
+ * board (CH1 = PA11, CH2 = PA12). Set BOARD_ID, and each board maps its two
+ * channels to a function below. Pure macros - safe to include anywhere.
  ******************************************************************************
  */
 #ifndef LIGHTING_CONFIG_H
 #define LIGHTING_CONFIG_H
 
 /* ============================================================================
- *  BOARD CONFIGURATION
- *  Pick which physical board this firmware is for. Affects status TX ID and
- *  which indicator side (left/right) the board responds to.
+ *  CHANNEL FUNCTION CODES  (assigned to CH1_FUNC / CH2_FUNC per board)
+ *    FN_NONE            : always off
+ *    FN_HEADLIGHT       : on while headlight commanded
+ *    FN_TURN_LEFT/RIGHT : blinks while that indicator is on
+ *    FN_BRAKE           : on while brake commanded
+ *    FN_STROBE          : BPS strobe (held BPS_STROBE_HOLD_MS after last frame)
+ *    FN_BRAKE_TURN_LEFT/RIGHT : red light, solid for brake; the turn blink wins
+ *                               when that side is requested
  * ============================================================================ */
-#define BOARD_FRONT     0
-#define BOARD_LEFT      1
-#define BOARD_REAR      2
-#define BOARD_RIGHT     3
-#define BOARD_CANOPY    4
+#define FN_NONE                 0
+#define FN_HEADLIGHT            1
+#define FN_TURN_LEFT            2
+#define FN_TURN_RIGHT          3
+#define FN_BRAKE               4
+#define FN_STROBE              5
+#define FN_BRAKE_TURN_LEFT     6
+#define FN_BRAKE_TURN_RIGHT    7
+
+/* ============================================================================
+ *  BOARD SELECT  (change per build target)
+ * ============================================================================ */
+#define BOARD_FRONT_LEFT    0
+#define BOARD_FRONT_RIGHT   1
+#define BOARD_REAR          2
+#define BOARD_CANOPY        3
+#define BOARD_UNUSED        4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_FRONT       /* <-- change per build target, Animation toggle at bottom */
+  #define BOARD_ID      BOARD_REAR
 #endif
 
 /* CAN IDs */
@@ -34,78 +51,57 @@
 #define CAN_ID_STATUS_RIGHT         0x673
 #define CAN_ID_STATUS_CANOPY        0x674
 
-/* Per-board derived constants */
-#if   BOARD_ID == BOARD_FRONT
-    #define MY_STATUS_ID            CAN_ID_STATUS_FRONT
-    #define RESPONDS_TO_LEFT        1
-    #define RESPONDS_TO_RIGHT       1
-    /* Strip is mounted upside-down: swap left/right indicator bits. */
-    #define FRONT_SWAP_LR           1
-    #define HEADLIGHT_R             0
-    #define HEADLIGHT_W             255
-    /* Headlight white level while a turn is animating (dims so amber stands out). */
-    #define HEADLIGHT_TURN_DIM_W    64
-    #define MATTHEW_NUM_QUAD_CHIPS      9
-    /* Lit segments per side; front bar is shorter than rear, fewer segments to keep a sensible dark centre. */
-    #define TURN_SEGMENTS_PER_SIDE      6
-#elif BOARD_ID == BOARD_LEFT
-    #define MY_STATUS_ID            CAN_ID_STATUS_LEFT
-    #define RESPONDS_TO_LEFT        1
-    #define RESPONDS_TO_RIGHT       0
-    #define HEADLIGHT_R             0
-    #define HEADLIGHT_W             0       /* side panel - no headlight by default */
-    #define MATTHEW_NUM_QUAD_CHIPS      3
-    /* Left panel is mounted backwards, so sweep from the opposite end. */
-    #define TURN_SWEEP_REVERSE          1
+/* Per-board channel + status assignment. Change MY_STATUS_ID to re-pair IDs.
+ *
+ *  Board         CH1 (PA11)          CH2 (PA12)          Status
+ *  FRONT_LEFT    left turn           -                   0x671
+ *  FRONT_RIGHT   right turn          headlight           0x670
+ *  REAR          brake + left turn   brake + right turn  0x672
+ *  CANOPY        strobe              brake               0x674
+ *  UNUSED        -                   -                   0x673 (CAN passthrough)
+ */
+#if   BOARD_ID == BOARD_FRONT_LEFT
+    #define MY_STATUS_ID    CAN_ID_STATUS_LEFT
+    #define CH1_FUNC        FN_TURN_LEFT
+    #define CH2_FUNC        FN_NONE
+#elif BOARD_ID == BOARD_FRONT_RIGHT
+    #define MY_STATUS_ID    CAN_ID_STATUS_FRONT
+    #define CH1_FUNC        FN_TURN_RIGHT
+    #define CH2_FUNC        FN_HEADLIGHT
 #elif BOARD_ID == BOARD_REAR
-    #define MY_STATUS_ID            CAN_ID_STATUS_REAR
-    #define RESPONDS_TO_LEFT        1
-    #define RESPONDS_TO_RIGHT       1
-    #define HEADLIGHT_R             42     /* rear "headlight" = tail light, red */
-    #define HEADLIGHT_W             0
-    #define MATTHEW_NUM_QUAD_CHIPS      11
-    /* Lit segments per side for the split turn indicator (matches brake-bar inner edges). */
-    #define TURN_SEGMENTS_PER_SIDE      7
-#elif BOARD_ID == BOARD_RIGHT
-    #define MY_STATUS_ID            CAN_ID_STATUS_RIGHT
-    #define RESPONDS_TO_LEFT        0
-    #define RESPONDS_TO_RIGHT       1
-    #define HEADLIGHT_R             0
-    #define HEADLIGHT_W             0
-    #define MATTHEW_NUM_QUAD_CHIPS      3
+    #define MY_STATUS_ID    CAN_ID_STATUS_REAR
+    #define CH1_FUNC        FN_BRAKE_TURN_LEFT
+    #define CH2_FUNC        FN_BRAKE_TURN_RIGHT
 #elif BOARD_ID == BOARD_CANOPY
-    #define MY_STATUS_ID            CAN_ID_STATUS_CANOPY
-    #define RESPONDS_TO_LEFT        0
-    #define RESPONDS_TO_RIGHT       0
-    #define HEADLIGHT_R             0
-    #define HEADLIGHT_W             0
-    #define MATTHEW_NUM_QUAD_CHIPS      4
+    #define MY_STATUS_ID    CAN_ID_STATUS_CANOPY
+    #define CH1_FUNC        FN_STROBE
+    #define CH2_FUNC        FN_BRAKE
+#elif BOARD_ID == BOARD_UNUSED
+    #define MY_STATUS_ID    CAN_ID_STATUS_RIGHT
+    #define CH1_FUNC        FN_NONE
+    #define CH2_FUNC        FN_NONE
 #else
-    #error "BOARD_ID must be one of BOARD_FRONT/LEFT/REAR/RIGHT/CANOPY"
+    #error "BOARD_ID must be BOARD_FRONT_LEFT/FRONT_RIGHT/REAR/CANOPY/UNUSED"
 #endif
 
-/* Loop / comms timing */
-#define COMMAND_WATCHDOG_MS         500      /* blank LEDs if no command within  */
-#define STATUS_TX_PERIOD_MS         100      /* 10 Hz status                     */
+/* ============================================================================
+ *  TIMING
+ * ============================================================================ */
+#define COMMAND_WATCHDOG_MS         500      /* no command within → all off */
+#define STATUS_TX_PERIOD_MS         100      /* 10 Hz status                */
 #define MAIN_LOOP_PERIOD_MS         1
-#define BPS_STROBE_HOLD_MS          1000     /* keep strobe on for 1 s after last msg */
+#define BPS_STROBE_HOLD_MS          1000     /* strobe on 1 s after last msg */
+#define TURN_FLASH_PPM              67       /* turn blink rate (pulses/min) */
 
-/* Hold brake active for this long after the last frame with the brake bit set.
- * Bridges brief dropouts from senders that interleave brake and turn frames. */
-#define BRAKE_RELEASE_DEBOUNCE_MS   150
-
-/* Same debounce for the headlight base layer. */
+/* Hold a request active this long after its bit drops (bridges senders that
+ * interleave brake/turn frames so outputs don't flicker). */
+#define BRAKE_RELEASE_DEBOUNCE_MS       150
 #define HEADLIGHT_RELEASE_DEBOUNCE_MS   150
-
-/* Keep the front headlight dimmed for this long after the turn stops animating,
- * so it doesn't blip back to full brightness on the last amber frame. */
-#define HEADLIGHT_TURN_DIM_LINGER_MS    100
-
-/* Hold a turn indicator active for this long after the last frame with its bit set.
- * Bridges interleaved turn/brake frames so the split indicator doesn't blip idle. */
 #define TURN_RELEASE_DEBOUNCE_MS        150
 
-/* Fault codes (matches DBC VAL_TABLE_ Lighting_Board_Fault) */
+/* ============================================================================
+ *  FAULT CODES  (matches DBC VAL_TABLE_ Lighting_Board_Fault)
+ * ============================================================================ */
 #define FAULT_OK                    0
 #define FAULT_ADDR_LED_UNDER        1
 #define FAULT_LED0_UNDER            2
@@ -115,88 +111,5 @@
 #define FAULT_LED1_OVER             6
 #define FAULT_LIGHT_CMD_WATCHDOG    7
 #define FAULT_WATCHDOG              8
-
-/* WS2812 / WS2814 frame */
-#define NUM_STEPS                   (32 * 4 * MATTHEW_NUM_QUAD_CHIPS)
-#define LOW                         30
-#define HI                          41
-#define TOTAL_LEDS                  (4 * MATTHEW_NUM_QUAD_CHIPS)
-#define FIRST_ACTIVE                1
-
-/* ============================================================================
- *  ANIMATION TIMING
- *    All in milliseconds; lighting.c converts them to main-loop frames via
- *    MAIN_LOOP_PERIOD_MS, so changing MAIN_LOOP_PERIOD_MS rescales them.
- * ============================================================================ */
-#define TURN_STEP_MS            20   /* per-segment step for the split turn (front/rear) */
-#define TURN_HOLD_MS            80   /* hold time at full / empty between phases  */
-#define BRAKE_STEP_MS           10   /* per-LED step for the brake-bar expansion  */
-
-/* Full-strip sweep (left/right/canopy) fill/empty duration. Fixed wall-time so
- * the blink cadence matches the front regardless of strip length, instead of
- * scaling per-LED. 120 ms = the front's per-side fill (6 segments x TURN_STEP_MS). */
-#define TURN_SWEEP_MS           120
-
-/* ANIM_OFF turn flash rate (pulses/min, 50% duty). Regs require 60-120 ppm. Only
- * used when ANIMATION_MODE == ANIM_OFF. */
-#define TURN_FLASH_PPM          67
-
-/* ============================================================================
- *  PATTERN COLOURS  (R, G, B, W channels, each 0-255)
- * ============================================================================ */
-/* Full-strip sweep turn indicator (left / right / canopy) - amber.
- * Matches the front split-turn amber (TURN_FRONT_*) so all boards read the same. */
-#define TURN_SWEEP_R            255
-#define TURN_SWEEP_G            64
-#define TURN_SWEEP_B            0
-#define TURN_SWEEP_W            0
-/* Front split turn indicator, overlaid on the headlight - amber. */
-#define TURN_FRONT_R            255
-#define TURN_FRONT_G            64
-#define TURN_FRONT_B            0
-#define TURN_FRONT_W            0
-/* Rear split turn indicator - red (matches the brake so it merges cleanly). */
-#define TURN_REAR_R             255
-#define TURN_REAR_G             0
-#define TURN_REAR_B             0
-#define TURN_REAR_W             0
-/* Brake bar - red. */
-#define BRAKE_R                 255
-#define BRAKE_G                 0
-#define BRAKE_B                 0
-#define BRAKE_W                 0
-
-/* ============================================================================
- *  INDICATOR / BRAKE GEOMETRY
- * ============================================================================ */
-/* Strip physically folds back on itself at its midpoint (1) or is a single
- * straight run (0). Sets how the brake / rear-indicator centre is derived. */
-#define BRAKE_STRIP_FOLDED      1
-/* Set to 1 if the rear bar's left/right halves come out physically reversed. */
-#define REAR_TURN_SWAP_SIDES    0
-/* Set to 1 if the front strip is mounted upside-down (swaps left/right indicators). */
-#ifndef FRONT_SWAP_LR
-  #define FRONT_SWAP_LR         0
-#endif
-/* Full-strip sweep boards (left/right): reverse the fill/empty direction for a
- * panel that's physically mounted backwards, so both sides sweep the same way. */
-#ifndef TURN_SWEEP_REVERSE
-  #define TURN_SWEEP_REVERSE    0
-#endif
-/* TURN_SEGMENTS_PER_SIDE is set per board above (front/rear); other boards fall
- * back to a default in lighting.c since they use the full-strip sweep. */
-
-/* ============================================================================
- *  ANIMATION MODE
- *    ANIM_ON  : run the full fill/sweep animations.
- *    ANIM_OFF : skip animation - LEDs are solid-on while the command is active
- *               and off otherwise.
- * ============================================================================ */
-#define ANIM_OFF        0
-#define ANIM_ON         1
-
-#ifndef ANIMATION_MODE
-  #define ANIMATION_MODE  1
-#endif
 
 #endif /* LIGHTING_CONFIG_H */
