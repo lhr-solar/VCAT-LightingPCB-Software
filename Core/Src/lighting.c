@@ -44,7 +44,9 @@ static int channel_state(int func,
                          int left_req, int right_req,
                          int blink_on, int strobe_on) {
     switch (func) {
-        case FN_HEADLIGHT:        return headlight_req;
+        case FN_HEADLIGHT:
+            if (HEADLIGHT_BLANK_ON_TURN && (left_req || right_req)) return 0;
+            return headlight_req;
         case FN_TURN_LEFT:        return left_req  && blink_on;
         case FN_TURN_RIGHT:       return right_req && blink_on;
         case FN_BRAKE:            return brake_req;

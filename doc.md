@@ -87,7 +87,11 @@ STATUS_TX_PERIOD_MS   100   // 10 Hz status TX
 MAIN_LOOP_PERIOD_MS   1     // loop period
 BPS_STROBE_HOLD_MS    1000  // strobe stays on 1 s after last strobe frame
 TURN_FLASH_PPM        67    // turn blink rate (pulses/min, 50% duty)
+HEADLIGHT_BLANK_ON_TURN 1   // 1 = headlight off while an indicator is active
 ```
+
+`HEADLIGHT_BLANK_ON_TURN` works because every board sees the same command, so a
+headlight board can react to the indicator bits. Set to 0 to keep headlights on.
 
 `*_RELEASE_DEBOUNCE_MS` hold a request briefly after its bit drops, bridging
 senders that interleave brake/turn frames so outputs don't flicker.

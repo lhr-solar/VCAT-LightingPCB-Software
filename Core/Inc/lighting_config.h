@@ -93,6 +93,9 @@
 #define BPS_STROBE_HOLD_MS          1000     /* strobe on 1 s after last msg */
 #define TURN_FLASH_PPM              67       /* turn blink rate (pulses/min) */
 
+/* 1 = FN_HEADLIGHT channels switch off while either indicator is active. */
+#define HEADLIGHT_BLANK_ON_TURN     1
+
 /* Hold a request active this long after its bit drops (bridges senders that
  * interleave brake/turn frames so outputs don't flicker). */
 #define BRAKE_RELEASE_DEBOUNCE_MS       150
