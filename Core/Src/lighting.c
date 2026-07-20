@@ -45,6 +45,9 @@ static int channel_state(int func,
                          int blink_on, int strobe_on) {
     switch (func) {
         case FN_HEADLIGHT:        return headlight_req;
+        /* Headlight, but cut when its own side's indicator is on. */
+        case FN_HEADLIGHT_LEFT:   return headlight_req && !left_req;
+        case FN_HEADLIGHT_RIGHT:  return headlight_req && !right_req;
         case FN_TURN_LEFT:        return left_req  && blink_on;
         case FN_TURN_RIGHT:       return right_req && blink_on;
         case FN_BRAKE:            return brake_req;

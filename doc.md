@@ -55,6 +55,7 @@ What each drives is set per board in `lighting_config.h` via `CH1_FUNC`/`CH2_FUN
 |----------|-----------|
 | `FN_NONE` | always off |
 | `FN_HEADLIGHT` | on while headlight commanded |
+| `FN_HEADLIGHT_LEFT` / `FN_HEADLIGHT_RIGHT` | headlight, but off while that side's indicator is on |
 | `FN_TURN_LEFT` / `FN_TURN_RIGHT` | blinks while that indicator is on |
 | `FN_BRAKE` | on while brake commanded |
 | `FN_STROBE` | BPS strobe (held on `BPS_STROBE_HOLD_MS` after last frame) |
@@ -72,7 +73,7 @@ Change `BOARD_ID` before flashing each board:
 |-------|-----------|-----------|-----------|
 | `BOARD_FRONT` | left turn | right turn | 0x670 |
 | `BOARD_LEFT` | — | — | 0x671 |
-| `BOARD_RIGHT` | headlight | headlight | 0x673 |
+| `BOARD_RIGHT` | headlight (L, off on left turn) | headlight (R, off on right turn) | 0x673 |
 | `BOARD_REAR` | brake + left turn | brake + right turn | 0x672 |
 | `BOARD_CANOPY` | strobe | brake | 0x674 |
 

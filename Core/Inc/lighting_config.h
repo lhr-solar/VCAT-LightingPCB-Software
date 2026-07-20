@@ -15,6 +15,8 @@
  *  CHANNEL FUNCTION CODES  (assigned to CH1_FUNC / CH2_FUNC per board)
  *    FN_NONE            : always off
  *    FN_HEADLIGHT       : on while headlight commanded
+ *    FN_HEADLIGHT_LEFT  : headlight, but off while the LEFT indicator is on
+ *    FN_HEADLIGHT_RIGHT : headlight, but off while the RIGHT indicator is on
  *    FN_TURN_LEFT/RIGHT : blinks while that indicator is on
  *    FN_BRAKE           : on while brake commanded
  *    FN_STROBE          : BPS strobe (held BPS_STROBE_HOLD_MS after last frame)
@@ -29,6 +31,8 @@
 #define FN_STROBE              5
 #define FN_BRAKE_TURN_LEFT     6
 #define FN_BRAKE_TURN_RIGHT    7
+#define FN_HEADLIGHT_LEFT      8
+#define FN_HEADLIGHT_RIGHT     9
 
 /* ============================================================================
  *  BOARD SELECT  (change per build target)
@@ -36,11 +40,11 @@
 #define BOARD_FRONT     0
 #define BOARD_LEFT      1
 #define BOARD_RIGHT     2
-#define BOARD_REAR      3
+#define BOARD_REAR      3 
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_REAR
+  #define BOARD_ID      BOARD_RIGHT
 #endif
 
 /* CAN IDs */
@@ -56,7 +60,7 @@
  *  Board     CH1 (PA11)          CH2 (PA12)          Status
  *  FRONT     left turn           right turn          0x670
  *  LEFT      -                   -                   0x671 (CAN passthrough)
- *  RIGHT     headlight           headlight           0x673
+ *  RIGHT     headlight (L side)  headlight (R side)  0x673
  *  REAR      brake + left turn   brake + right turn  0x672
  *  CANOPY    strobe              brake               0x674
  */
@@ -70,8 +74,8 @@
     #define CH2_FUNC        FN_NONE
 #elif BOARD_ID == BOARD_RIGHT
     #define MY_STATUS_ID    CAN_ID_STATUS_RIGHT
-    #define CH1_FUNC        FN_HEADLIGHT
-    #define CH2_FUNC        FN_HEADLIGHT
+    #define CH1_FUNC        FN_HEADLIGHT_LEFT
+    #define CH2_FUNC        FN_HEADLIGHT_RIGHT
 #elif BOARD_ID == BOARD_REAR
     #define MY_STATUS_ID    CAN_ID_STATUS_REAR
     #define CH1_FUNC        FN_BRAKE_TURN_LEFT
