@@ -44,7 +44,7 @@
 #define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
-  #define BOARD_ID      BOARD_RIGHT
+  #define BOARD_ID      BOARD_FRONT     // FRONT IS RIGHT, RIGHT IS FRONT :p
 #endif
 
 /* CAN IDs */
