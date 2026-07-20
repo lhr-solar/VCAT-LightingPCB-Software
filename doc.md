@@ -65,21 +65,19 @@ What each drives is set per board in `lighting_config.h` via `CH1_FUNC`/`CH2_FUN
 Change `BOARD_ID` before flashing each board:
 
 ```c
-#define BOARD_ID   BOARD_REAR   // FRONT_LEFT / FRONT_RIGHT / REAR / CANOPY / UNUSED
+#define BOARD_ID   BOARD_REAR   // FRONT / LEFT / RIGHT / REAR / CANOPY
 ```
 
 | Board | CH1 (PA11) | CH2 (PA12) | Status ID |
 |-------|-----------|-----------|-----------|
-| `BOARD_FRONT_LEFT` | left turn | — | 0x671 |
-| `BOARD_FRONT_RIGHT` | right turn | headlight | 0x670 |
+| `BOARD_FRONT` | left turn | right turn | 0x670 |
+| `BOARD_LEFT` | — | — | 0x671 |
+| `BOARD_RIGHT` | headlight | headlight | 0x673 |
 | `BOARD_REAR` | brake + left turn | brake + right turn | 0x672 |
 | `BOARD_CANOPY` | strobe | brake | 0x674 |
-| `BOARD_UNUSED` | — | — | 0x673 |
 
-`BOARD_UNUSED` drives nothing; it just sits on the bus for CAN passthrough.
-
-Front turn indicators are wired to the side turn lights on the harness side, so
-the firmware only deals with front left / front right.
+`BOARD_FRONT` drives both indicators from one board so they blink in lockstep.
+Front turn outputs also feed the side turn lights on the harness side.
 
 ### Timing
 

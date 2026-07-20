@@ -33,11 +33,11 @@
 /* ============================================================================
  *  BOARD SELECT  (change per build target)
  * ============================================================================ */
-#define BOARD_FRONT_LEFT    0
-#define BOARD_FRONT_RIGHT   1
-#define BOARD_REAR          2
-#define BOARD_CANOPY        3
-#define BOARD_UNUSED        4
+#define BOARD_FRONT     0
+#define BOARD_LEFT      1
+#define BOARD_RIGHT     2
+#define BOARD_REAR      3
+#define BOARD_CANOPY    4
 
 #ifndef BOARD_ID
   #define BOARD_ID      BOARD_REAR
@@ -51,22 +51,26 @@
 #define CAN_ID_STATUS_RIGHT         0x673
 #define CAN_ID_STATUS_CANOPY        0x674
 
-/* Per-board channel + status assignment. Change MY_STATUS_ID to re-pair IDs.
+/* Per-board channel + status assignment.
  *
- *  Board         CH1 (PA11)          CH2 (PA12)          Status
- *  FRONT_LEFT    left turn           -                   0x671
- *  FRONT_RIGHT   right turn          headlight           0x670
- *  REAR          brake + left turn   brake + right turn  0x672
- *  CANOPY        strobe              brake               0x674
- *  UNUSED        -                   -                   0x673 (CAN passthrough)
+ *  Board     CH1 (PA11)          CH2 (PA12)          Status
+ *  FRONT     left turn           right turn          0x670
+ *  LEFT      -                   -                   0x671 (CAN passthrough)
+ *  RIGHT     headlight           headlight           0x673
+ *  REAR      brake + left turn   brake + right turn  0x672
+ *  CANOPY    strobe              brake               0x674
  */
-#if   BOARD_ID == BOARD_FRONT_LEFT
-    #define MY_STATUS_ID    CAN_ID_STATUS_LEFT
-    #define CH1_FUNC        FN_TURN_LEFT
-    #define CH2_FUNC        FN_NONE
-#elif BOARD_ID == BOARD_FRONT_RIGHT
+#if   BOARD_ID == BOARD_FRONT
     #define MY_STATUS_ID    CAN_ID_STATUS_FRONT
-    #define CH1_FUNC        FN_TURN_RIGHT
+    #define CH1_FUNC        FN_TURN_LEFT
+    #define CH2_FUNC        FN_TURN_RIGHT
+#elif BOARD_ID == BOARD_LEFT
+    #define MY_STATUS_ID    CAN_ID_STATUS_LEFT
+    #define CH1_FUNC        FN_NONE
+    #define CH2_FUNC        FN_NONE
+#elif BOARD_ID == BOARD_RIGHT
+    #define MY_STATUS_ID    CAN_ID_STATUS_RIGHT
+    #define CH1_FUNC        FN_HEADLIGHT
     #define CH2_FUNC        FN_HEADLIGHT
 #elif BOARD_ID == BOARD_REAR
     #define MY_STATUS_ID    CAN_ID_STATUS_REAR
@@ -76,12 +80,8 @@
     #define MY_STATUS_ID    CAN_ID_STATUS_CANOPY
     #define CH1_FUNC        FN_STROBE
     #define CH2_FUNC        FN_BRAKE
-#elif BOARD_ID == BOARD_UNUSED
-    #define MY_STATUS_ID    CAN_ID_STATUS_RIGHT
-    #define CH1_FUNC        FN_NONE
-    #define CH2_FUNC        FN_NONE
 #else
-    #error "BOARD_ID must be BOARD_FRONT_LEFT/FRONT_RIGHT/REAR/CANOPY/UNUSED"
+    #error "BOARD_ID must be BOARD_FRONT/LEFT/RIGHT/REAR/CANOPY"
 #endif
 
 /* ============================================================================
